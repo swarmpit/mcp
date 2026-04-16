@@ -91,9 +91,8 @@ export class SwarmpitClient {
     return this.request<SwarmpitService>("GET", `/api/services/${encodeURIComponent(id)}`);
   }
 
-  async getServiceLogs(id: string, since?: string): Promise<SwarmpitLogEntry[]> {
-    const query = since ? `?since=${encodeURIComponent(since)}` : "";
-    return this.request<SwarmpitLogEntry[]>("GET", `/api/services/${encodeURIComponent(id)}/logs${query}`);
+  async getServiceLogs(id: string, since = "0"): Promise<SwarmpitLogEntry[]> {
+    return this.request<SwarmpitLogEntry[]>("GET", `/api/services/${encodeURIComponent(id)}/logs?since=${encodeURIComponent(since)}`);
   }
 
   async createService(spec: Record<string, unknown>): Promise<{ id: string }> {
@@ -111,6 +110,10 @@ export class SwarmpitClient {
 
   async rollbackService(id: string): Promise<void> {
     await this.request<void>("POST", `/api/services/${encodeURIComponent(id)}/rollback`);
+  }
+
+  async stopService(id: string): Promise<void> {
+    await this.request<void>("POST", `/api/services/${encodeURIComponent(id)}/stop`);
   }
 
   async deleteService(id: string): Promise<void> {
@@ -138,12 +141,23 @@ export class SwarmpitClient {
     await this.request<void>("POST", "/api/stacks", spec);
   }
 
-  async updateStack(name: string, spec: { spec: { compose: string } }): Promise<void> {
-    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}`, spec);
+  async updateStack(name: string, compose: string): Promise<void> {
+    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}`, {
+      name,
+      spec: { compose },
+    });
   }
 
   async redeployStack(name: string): Promise<void> {
     await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/redeploy`);
+  }
+
+  async rollbackStack(name: string): Promise<void> {
+    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/rollback`);
+  }
+
+  async deactivateStack(name: string): Promise<void> {
+    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/deactivate`);
   }
 
   async deleteStack(name: string): Promise<void> {

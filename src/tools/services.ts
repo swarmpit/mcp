@@ -150,6 +150,20 @@ export function registerServiceTools(
   );
 
   server.tool(
+    "stop_service",
+    "Stop a Docker Swarm service (scale to 0 replicas)",
+    { id: z.string().describe("Service ID or name") },
+    async ({ id }) => {
+      try {
+        await client.stopService(id);
+        return toolResult({ stopped: true, id });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
     "delete_service",
     "Delete a Docker Swarm service. DESTRUCTIVE: requires confirm=true",
     {

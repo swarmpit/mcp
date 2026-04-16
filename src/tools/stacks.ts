@@ -79,7 +79,7 @@ export function registerStackTools(
         const current = await client.getStackFile(name).catch(() => ({ compose: "" }));
         const restored = restoreRedactedValues(compose, current.compose);
         const resolved = resolveComposeEnvRefs(restored);
-        await client.updateStack(name, { spec: { compose: resolved } });
+        await client.updateStack(name, resolved);
         return toolResult({ updated: true, name });
       } catch (e) {
         return toolError(e);
@@ -95,6 +95,34 @@ export function registerStackTools(
       try {
         await client.redeployStack(name);
         return toolResult({ redeployed: true, name });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "rollback_stack",
+    "Rollback all services in a Docker Swarm stack to their previous version",
+    { name: z.string().describe("Stack name") },
+    async ({ name }) => {
+      try {
+        await client.rollbackStack(name);
+        return toolResult({ rolledBack: true, name });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "deactivate_stack",
+    "Deactivate (stop) all services in a Docker Swarm stack",
+    { name: z.string().describe("Stack name") },
+    async ({ name }) => {
+      try {
+        await client.deactivateStack(name);
+        return toolResult({ deactivated: true, name });
       } catch (e) {
         return toolError(e);
       }
