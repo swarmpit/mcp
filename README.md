@@ -4,15 +4,6 @@ MCP server for managing [Swarmpit](https://swarmpit.io) Docker Swarm instances f
 
 The server runs locally and holds API tokens — they never enter the LLM conversation context.
 
-## Setup
-
-```bash
-git clone https://github.com/swarmpit/mcp
-cd mcp
-npm install
-npm run build
-```
-
 ## Configuration
 
 Add to your `.mcp.json` (project-level) or `~/.claude.json` (global):
@@ -21,8 +12,8 @@ Add to your `.mcp.json` (project-level) or `~/.claude.json` (global):
 {
   "mcpServers": {
     "swarmpit-prod": {
-      "command": "node",
-      "args": ["/path/to/mcp-swarmpit/dist/index.js"],
+      "command": "npx",
+      "args": ["github:swarmpit/mcp"],
       "env": {
         "SWARMPIT_URL": "https://swarmpit.example.com",
         "SWARMPIT_TOKEN": "your-api-token",
@@ -43,8 +34,8 @@ Register each as a separate MCP server instance:
 {
   "mcpServers": {
     "swarmpit-prod": {
-      "command": "node",
-      "args": ["/path/to/mcp-swarmpit/dist/index.js"],
+      "command": "npx",
+      "args": ["github:swarmpit/mcp"],
       "env": {
         "SWARMPIT_URL": "https://swarmpit.prod.example.com",
         "SWARMPIT_TOKEN": "prod-token",
@@ -52,8 +43,8 @@ Register each as a separate MCP server instance:
       }
     },
     "swarmpit-staging": {
-      "command": "node",
-      "args": ["/path/to/mcp-swarmpit/dist/index.js"],
+      "command": "npx",
+      "args": ["github:swarmpit/mcp"],
       "env": {
         "SWARMPIT_URL": "https://swarmpit.staging.example.com",
         "SWARMPIT_TOKEN": "staging-token",
@@ -173,10 +164,30 @@ environment:
 ## Development
 
 ```bash
+git clone https://github.com/swarmpit/mcp
+cd mcp
 npm install
 npm run build        # compile TypeScript
 npm run dev          # watch mode
 npm test             # run tests
+```
+
+When developing locally, point `.mcp.json` at your local build:
+
+```json
+{
+  "mcpServers": {
+    "swarmpit-dev": {
+      "command": "node",
+      "args": ["/path/to/mcp/dist/index.js"],
+      "env": {
+        "SWARMPIT_URL": "https://swarmpit.example.com",
+        "SWARMPIT_TOKEN": "your-token",
+        "SWARMPIT_REDACT": "sensitive"
+      }
+    }
+  }
+}
 ```
 
 ## License
