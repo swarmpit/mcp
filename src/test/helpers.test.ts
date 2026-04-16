@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { toolResult, toolError, resolveEnvRef } from "../tools/helpers.js";
+import { toolResult, toolError, resolveEnvRef, prepareServiceForUpdate } from "../tools/helpers.js";
 
 describe("toolResult", () => {
   it("wraps data as JSON text content", () => {
@@ -43,5 +43,74 @@ describe("resolveEnvRef", () => {
 
   it("throws on invalid value type", () => {
     assert.throws(() => resolveEnvRef(42), /Invalid env var value/);
+  });
+});
+
+describe("prepareServiceForUpdate", () => {
+  it("strips null values", () => {
+    const result = prepareServiceForUpdate({
+      serviceName: "test",
+      mode: "replicated",
+      tty: null,
+      dir: null,
+      command: null,
+    });
+    assert.equal(result.serviceName, "test");
+    assert.equal("tty" in result, false);
+    assert.equal("dir" in result, false);
+    assert.equal("command" in result, false);
+  });
+
+  it("strips read-only fields", () => {
+    const result = prepareServiceForUpdate({
+      id: "abc123",
+      createdAt: "2024-01-01",
+      updatedAt: "2024-01-02",
+      state: "running",
+      status: { tasks: { running: 1, total: 1 } },
+      serviceName: "test",
+      mode: "replicated",
+    });
+    assert.equal("id" in result, false);
+    assert.equal("createdAt" in result, false);
+    assert.equal("updatedAt" in result, false);
+    assert.equal("state" in result, false);
+    assert.equal("status" in result, false);
+    assert.equal(result.serviceName, "test");
+  });
+
+  it("trims repository to name and tag only", () => {
+    const result = prepareServiceForUpdate({
+      serviceName: "test",
+      mode: "replicated",
+      repository: {
+        name: "nginx",
+        tag: "alpine",
+        image: "nginx:alpine",
+        imageDigest: "sha256:abc123",
+      },
+    });
+    const repo = result.repository as Record<string, unknown>;
+    assert.equal(repo.name, "nginx");
+    assert.equal(repo.tag, "alpine");
+    assert.equal("image" in repo, false);
+    assert.equal("imageDigest" in repo, false);
+  });
+
+  it("handles repository with empty imageDigest", () => {
+    const result = prepareServiceForUpdate({
+      serviceName: "test",
+      mode: "replicated",
+      repository: {
+        name: "nginx",
+        tag: "alpine",
+        image: "nginx:alpine",
+        imageDigest: "",
+      },
+    });
+    const repo = result.repository as Record<string, unknown>;
+    assert.equal(repo.name, "nginx");
+    assert.equal(repo.tag, "alpine");
+    assert.equal("imageDigest" in repo, false);
   });
 });
