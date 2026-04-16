@@ -10,6 +10,9 @@ import { registerTaskTools } from "./tasks.js";
 import { registerVolumeTools } from "./volumes.js";
 import { registerSecretTools } from "./secrets.js";
 import { registerConfigTools } from "./configs.js";
+import { registerAdminTools } from "./admin.js";
+import { registerDashboardTools } from "./dashboard.js";
+import { registerTimeseriesTools } from "./timeseries.js";
 
 export function registerAllTools(
   server: McpServer,
@@ -27,4 +30,7 @@ export function registerAllTools(
   registerVolumeTools(server, client);
   registerSecretTools(server, client, redact);
   registerConfigTools(server, client, redact);
+  registerAdminTools(server, client);
+  registerDashboardTools(server, client);
+  registerTimeseriesTools(server, client);
 }

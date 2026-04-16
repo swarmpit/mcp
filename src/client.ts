@@ -317,4 +317,59 @@ export class SwarmpitClient {
   async deleteConfig(id: string): Promise<void> {
     await this.request<void>("DELETE", `/api/configs/${encodeURIComponent(id)}`);
   }
+
+  // Admin
+  async listUsers(): Promise<Record<string, unknown>[]> {
+    return this.request<Record<string, unknown>[]>("GET", "/api/admin/users");
+  }
+
+  async getUser(id: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("GET", `/api/admin/users/${encodeURIComponent(id)}`);
+  }
+
+  async createUser(spec: { username: string; password: string; role: string; email?: string }): Promise<void> {
+    await this.request<void>("POST", "/api/admin/users", spec);
+  }
+
+  async editUser(id: string, spec: Record<string, unknown>): Promise<void> {
+    await this.request<void>("POST", `/api/admin/users/${encodeURIComponent(id)}`, spec);
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/admin/users/${encodeURIComponent(id)}`);
+  }
+
+  // Dashboard
+  async pinNodeToDashboard(id: string): Promise<void> {
+    await this.request<void>("POST", `/api/nodes/${encodeURIComponent(id)}/dashboard`);
+  }
+
+  async unpinNodeFromDashboard(id: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/nodes/${encodeURIComponent(id)}/dashboard`);
+  }
+
+  async pinServiceToDashboard(id: string): Promise<void> {
+    await this.request<void>("POST", `/api/services/${encodeURIComponent(id)}/dashboard`);
+  }
+
+  async unpinServiceFromDashboard(id: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/services/${encodeURIComponent(id)}/dashboard`);
+  }
+
+  // Timeseries
+  async getNodesTimeseries(): Promise<unknown> {
+    return this.request<unknown>("GET", "/api/nodes/ts");
+  }
+
+  async getServicesCpuTimeseries(): Promise<unknown> {
+    return this.request<unknown>("GET", "/api/services/ts/cpu");
+  }
+
+  async getServicesMemoryTimeseries(): Promise<unknown> {
+    return this.request<unknown>("GET", "/api/services/ts/memory");
+  }
+
+  async getTaskTimeseries(name: string): Promise<unknown> {
+    return this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(name)}/ts`);
+  }
 }
