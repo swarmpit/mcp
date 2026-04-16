@@ -1,10 +1,35 @@
 # mcp-swarmpit
 
-MCP server for managing [Swarmpit](https://swarmpit.io) Docker Swarm instances from [Claude Code](https://claude.ai/code) and other MCP clients.
+MCP server for managing [Swarmpit](https://swarmpit.io) Docker Swarm instances from any MCP-compatible client. 100% Swarmpit API coverage (79 endpoints).
 
-The server runs locally and holds API tokens — they never enter the LLM conversation context. 100% Swarmpit API coverage (79 endpoints).
+The server runs locally and holds API tokens — they never enter the LLM conversation context.
+
+Works with [opencode](https://opencode.ai) (recommended), [Claude Code](https://claude.ai/code), and any other MCP client.
 
 ## Configuration
+
+### opencode
+
+Add to your `.opencode.json`:
+
+```json
+{
+  "mcpServers": {
+    "swarmpit-prod": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["github:swarmpit/mcp"],
+      "env": {
+        "SWARMPIT_URL": "https://swarmpit.example.com",
+        "SWARMPIT_TOKEN": "your-api-token",
+        "SWARMPIT_REDACT": "sensitive"
+      }
+    }
+  }
+}
+```
+
+### Claude Code
 
 Add to your `.mcp.json` (project-level) or `~/.claude.json` (global):
 
@@ -48,7 +73,7 @@ Register each as a separate MCP server instance:
       "env": {
         "SWARMPIT_URL": "https://swarmpit.staging.example.com",
         "SWARMPIT_TOKEN": "staging-token",
-        "SWARMPIT_REDACT": "none"
+        "SWARMPIT_REDACT": "sensitive"
       }
     }
   }
@@ -73,6 +98,8 @@ Tools appear namespaced: `swarmpit-prod: list_services`, `swarmpit-staging: list
 | `all` | All values redacted | Redacted |
 | `sensitive` | Only names matching patterns | Redacted |
 | `none` | No redaction | Not redacted |
+
+> **Warning:** `none` mode sends all environment variables, secrets, and config data in full to the LLM provider. Only use this with a local model (e.g. via ollama/opencode) or on servers that definitely do not contain any sensitive environment variables or configs. Never use `none` with cloud-hosted LLM providers on production infrastructure.
 
 Built-in sensitive patterns: `pass`, `secret`, `token`, `key`, `auth`, `credential`, `private`, `dsn`, `connection_string`.
 
