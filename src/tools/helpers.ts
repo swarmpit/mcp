@@ -15,6 +15,17 @@ export function toolError(error: unknown): CallToolResult {
   };
 }
 
+/** Strip null values from an object — Swarmpit API rejects nulls for optional fields */
+export function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== null) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 export function resolveEnvRef(
   value: unknown
 ): string {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { RedactMode } from "../config.js";
 import { SwarmpitClient } from "../client.js";
 import { sanitizeService, sanitizeServices } from "../sanitize.js";
-import { toolResult, toolError, resolveEnvRef } from "./helpers.js";
+import { toolResult, toolError, resolveEnvRef, stripNulls } from "./helpers.js";
 
 export function registerServiceTools(
   server: McpServer,
@@ -127,7 +127,7 @@ export function registerServiceTools(
     async ({ id, replicas }) => {
       try {
         const service = await client.getService(id);
-        await client.updateService(id, { ...service, replicas });
+        await client.updateService(id, stripNulls({ ...service, replicas }));
         return toolResult({ scaled: true, id, from: service.replicas, to: replicas });
       } catch (e) {
         return toolError(e);
@@ -223,7 +223,7 @@ export function registerServiceTools(
           }
         }
 
-        await client.updateService(id, { ...service, variables });
+        await client.updateService(id, stripNulls({ ...service, variables }));
         return toolResult({ updated: true, id, set: changedNames, removed: remove ?? [] });
       } catch (e) {
         return toolError(e);
