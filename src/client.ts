@@ -142,7 +142,12 @@ export class SwarmpitClient {
   }
 
   async getStackFile(name: string): Promise<{ compose: string }> {
-    return this.request<{ compose: string }>("GET", `/api/stacks/${encodeURIComponent(name)}/file`);
+    const result = await this.request<{ spec?: { compose: string }; compose?: string }>(
+      "GET", `/api/stacks/${encodeURIComponent(name)}/file`
+    );
+    // API returns { spec: { compose } } but we normalize to { compose }
+    const compose = result.spec?.compose ?? result.compose ?? "";
+    return { compose };
   }
 
   async createStack(spec: { name: string; spec: { compose: string } }): Promise<void> {
