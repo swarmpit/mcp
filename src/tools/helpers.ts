@@ -15,14 +15,27 @@ export function toolError(error: unknown): CallToolResult {
   };
 }
 
-/** Strip null values from an object — Swarmpit API rejects nulls for optional fields */
-export function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Prepare a service object from GET response for use in POST update.
+ * - Strips null values (API rejects them for optional fields)
+ * - Strips read-only fields not accepted by the edit endpoint
+ * - Trims repository to { name, tag } (API rejects imageDigest/image)
+ */
+export function prepareServiceForUpdate(service: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (value !== null) {
-      result[key] = value;
-    }
+  const readOnlyKeys = new Set(["id", "createdAt", "updatedAt", "state", "status"]);
+
+  for (const [key, value] of Object.entries(service)) {
+    if (value === null || readOnlyKeys.has(key)) continue;
+    result[key] = value;
   }
+
+  // Repository: API only accepts { name, tag }
+  const repo = service.repository as Record<string, unknown> | undefined;
+  if (repo) {
+    result.repository = { name: repo.name, tag: repo.tag };
+  }
+
   return result;
 }
 
