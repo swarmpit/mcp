@@ -1,6 +1,6 @@
 import type { SwarmpitService, SwarmpitEnvVar } from "./types.js";
 
-const SENSITIVE_PATTERNS = [
+const DEFAULT_SENSITIVE_PATTERNS: RegExp[] = [
   /pass/i,
   /secret/i,
   /token/i,
@@ -12,9 +12,15 @@ const SENSITIVE_PATTERNS = [
   /dsn/i,
 ];
 
+let extraPatterns: RegExp[] = [];
+
+export function setExtraRedactPatterns(patterns: string[]): void {
+  extraPatterns = patterns.map((p) => new RegExp(p, "i"));
+}
 
 function isSensitiveEnvVar(name: string): boolean {
-  return SENSITIVE_PATTERNS.some((p) => p.test(name));
+  return DEFAULT_SENSITIVE_PATTERNS.some((p) => p.test(name))
+    || extraPatterns.some((p) => p.test(name));
 }
 
 function redactEnvVars(

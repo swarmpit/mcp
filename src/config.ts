@@ -4,6 +4,7 @@ export interface SwarmpitConfig {
   url: string;
   token: string;
   redact: RedactMode;
+  redactPatterns: string[];
 }
 
 export function loadConfig(): SwarmpitConfig {
@@ -22,9 +23,14 @@ export function loadConfig(): SwarmpitConfig {
     redact = redactRaw;
   }
 
+  const redactPatterns = process.env.SWARMPIT_REDACT_PATTERNS
+    ? process.env.SWARMPIT_REDACT_PATTERNS.split(",").map((p) => p.trim()).filter(Boolean)
+    : [];
+
   return {
     url: url.replace(/\/+$/, ""),
     token,
     redact,
+    redactPatterns,
   };
 }

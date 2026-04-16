@@ -6,6 +6,7 @@ import {
   sanitizeComposeYaml,
   resolveComposeEnvRefs,
   restoreRedactedValues,
+  setExtraRedactPatterns,
 } from "../sanitize.js";
 import type { SwarmpitService } from "../types.js";
 
@@ -66,6 +67,22 @@ describe("sanitizeService", () => {
     assert.equal(result.variables[3].value, "debug");        // LOG_LEVEL — not sensitive
     assert.equal(result.variables[4].value, "[REDACTED]");  // SECRET_VALUE — matches "secret"
     assert.equal(result.variables[5].value, "[REDACTED]");  // AUTH_HEADER — matches "auth"
+  });
+
+  it("redacts extra custom patterns", () => {
+    setExtraRedactPatterns(["GRAFANA", "RPC"]);
+    const service = makeService({
+      variables: [
+        { name: "GRAFANA", value: "https://grafana.example.com" },
+        { name: "RPC_URL", value: "ws://node:9999" },
+        { name: "LOG_LEVEL", value: "debug" },
+      ],
+    });
+    const result = sanitizeService(service, false);
+    assert.equal(result.variables[0].value, "[REDACTED]");  // GRAFANA — custom pattern
+    assert.equal(result.variables[1].value, "[REDACTED]");  // RPC_URL — custom pattern
+    assert.equal(result.variables[2].value, "debug");        // LOG_LEVEL — no match
+    setExtraRedactPatterns([]);  // clean up
   });
 
   it("preserves env var names", () => {

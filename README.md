@@ -64,6 +64,7 @@ Tools appear namespaced: `swarmpit-prod: list_services`, `swarmpit-staging: list
 | `SWARMPIT_URL` | Yes | Swarmpit instance URL |
 | `SWARMPIT_TOKEN` | Yes | API token (with or without `Bearer ` prefix) |
 | `SWARMPIT_REDACT` | No | Redaction mode: `all` (default), `sensitive`, or `none` |
+| `SWARMPIT_REDACT_PATTERNS` | No | Comma-separated extra patterns to redact in `sensitive` mode (regex, case-insensitive) |
 
 ### Redaction modes
 
@@ -72,6 +73,17 @@ Tools appear namespaced: `swarmpit-prod: list_services`, `swarmpit-staging: list
 | `all` | All values redacted | Not redacted |
 | `sensitive` | Only names matching patterns (`pass`, `secret`, `token`, `key`, `auth`, `credential`, `private`, `dsn`, `connection_string`) | Not redacted |
 | `none` | No redaction | Not redacted |
+
+In `sensitive` mode, add custom patterns via `SWARMPIT_REDACT_PATTERNS`:
+
+```json
+"env": {
+  "SWARMPIT_REDACT": "sensitive",
+  "SWARMPIT_REDACT_PATTERNS": "GRAFANA,RPC,ENDPOINT,DATABASE"
+}
+```
+
+Each entry is a case-insensitive regex matched against the env var name. These are added on top of the built-in patterns.
 
 ## Tools
 

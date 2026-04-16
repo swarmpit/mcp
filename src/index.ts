@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "./config.js";
 import { SwarmpitClient } from "./client.js";
+import { setExtraRedactPatterns } from "./sanitize.js";
 import { registerAllTools } from "./tools/register.js";
 
 async function checkConnection(url: string, token: string): Promise<void> {
@@ -20,6 +21,11 @@ async function checkConnection(url: string, token: string): Promise<void> {
 
 async function main() {
   const config = loadConfig();
+
+  if (config.redactPatterns.length > 0) {
+    setExtraRedactPatterns(config.redactPatterns);
+    console.error(`mcp-swarmpit: extra redact patterns: ${config.redactPatterns.join(", ")}`);
+  }
 
   await checkConnection(config.url, config.token);
 
