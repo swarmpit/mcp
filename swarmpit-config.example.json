@@ -1,0 +1,9 @@
+{
+  "redact": "sensitive",
+  "servers": {
+    "lark": {
+      "url": "https://swarmpit.lark.hydration.cloud",
+      "token": "${SWARMPIT_LARK_TOKEN}"
+    }
+  }
+}
