@@ -252,4 +252,32 @@ export function registerServiceTools(
       }
     }
   );
+
+  server.tool(
+    "get_service_compose",
+    "Get the compose YAML for a specific service",
+    { id: z.string().describe("Service ID or name") },
+    async ({ id }) => {
+      try {
+        const compose = await client.getServiceCompose(id);
+        return toolResult(compose);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "get_service_networks",
+    "Get networks attached to a specific service",
+    { id: z.string().describe("Service ID or name") },
+    async ({ id }) => {
+      try {
+        const networks = await client.getServiceNetworks(id);
+        return toolResult(networks);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }

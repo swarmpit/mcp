@@ -34,4 +34,41 @@ export function registerVolumeTools(
       }
     }
   );
+
+  server.tool(
+    "create_volume",
+    "Create a Docker Swarm volume",
+    {
+      volumeName: z.string().describe("Volume name"),
+      driver: z.string().default("local").describe("Volume driver (default: local)"),
+    },
+    async ({ volumeName, driver }) => {
+      try {
+        await client.createVolume({ volumeName, driver, options: [] });
+        return toolResult({ created: true, volumeName });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "delete_volume",
+    "Delete a Docker Swarm volume. DESTRUCTIVE: requires confirm=true",
+    {
+      name: z.string().describe("Volume name"),
+      confirm: z.boolean().describe("Must be true to confirm deletion"),
+    },
+    async ({ name, confirm }) => {
+      if (!confirm) {
+        return toolError("Destructive operation: set confirm=true to delete this volume");
+      }
+      try {
+        await client.deleteVolume(name);
+        return toolResult({ deleted: true, name });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }

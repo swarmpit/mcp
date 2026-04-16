@@ -148,4 +148,46 @@ export function registerStackTools(
       }
     }
   );
+
+  server.tool(
+    "get_stack_tasks",
+    "List all tasks (containers) in a stack",
+    { name: z.string().describe("Stack name") },
+    async ({ name }) => {
+      try {
+        const tasks = await client.getStackTasks(name);
+        return toolResult(tasks);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "get_stack_volumes",
+    "List all volumes in a stack",
+    { name: z.string().describe("Stack name") },
+    async ({ name }) => {
+      try {
+        const volumes = await client.getStackVolumes(name);
+        return toolResult(volumes);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "get_stack_networks",
+    "List all networks in a stack",
+    { name: z.string().describe("Stack name") },
+    async ({ name }) => {
+      try {
+        const networks = await client.getStackNetworks(name);
+        return toolResult(networks);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }

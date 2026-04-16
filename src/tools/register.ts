@@ -8,6 +8,8 @@ import { registerNetworkTools } from "./networks.js";
 import { registerNodeTools } from "./nodes.js";
 import { registerTaskTools } from "./tasks.js";
 import { registerVolumeTools } from "./volumes.js";
+import { registerSecretTools } from "./secrets.js";
+import { registerConfigTools } from "./configs.js";
 
 export function registerAllTools(
   server: McpServer,
@@ -23,4 +25,6 @@ export function registerAllTools(
   registerNodeTools(server, client);
   registerTaskTools(server, client);
   registerVolumeTools(server, client);
+  registerSecretTools(server, client, redact);
+  registerConfigTools(server, client, redact);
 }

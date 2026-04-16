@@ -124,6 +124,14 @@ export class SwarmpitClient {
     return this.request<SwarmpitTask[]>("GET", `/api/services/${encodeURIComponent(id)}/tasks`);
   }
 
+  async getServiceCompose(id: string): Promise<{ compose: string }> {
+    return this.request<{ compose: string }>("GET", `/api/services/${encodeURIComponent(id)}/compose`);
+  }
+
+  async getServiceNetworks(id: string): Promise<SwarmpitNetwork[]> {
+    return this.request<SwarmpitNetwork[]>("GET", `/api/services/${encodeURIComponent(id)}/networks`);
+  }
+
   // Stacks
   async listStacks(): Promise<SwarmpitStack[]> {
     return this.request<SwarmpitStack[]>("GET", "/api/stacks");
@@ -160,6 +168,18 @@ export class SwarmpitClient {
     await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/deactivate`);
   }
 
+  async getStackTasks(name: string): Promise<SwarmpitTask[]> {
+    return this.request<SwarmpitTask[]>("GET", `/api/stacks/${encodeURIComponent(name)}/tasks`);
+  }
+
+  async getStackVolumes(name: string): Promise<SwarmpitVolume[]> {
+    return this.request<SwarmpitVolume[]>("GET", `/api/stacks/${encodeURIComponent(name)}/volumes`);
+  }
+
+  async getStackNetworks(name: string): Promise<SwarmpitNetwork[]> {
+    return this.request<SwarmpitNetwork[]>("GET", `/api/stacks/${encodeURIComponent(name)}/networks`);
+  }
+
   async deleteStack(name: string): Promise<void> {
     await this.request<void>("DELETE", `/api/stacks/${encodeURIComponent(name)}`);
   }
@@ -173,6 +193,14 @@ export class SwarmpitClient {
     return this.request<SwarmpitNetwork>("GET", `/api/networks/${encodeURIComponent(id)}`);
   }
 
+  async createNetwork(spec: Record<string, unknown>): Promise<void> {
+    await this.request<void>("POST", "/api/networks", spec);
+  }
+
+  async deleteNetwork(id: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/networks/${encodeURIComponent(id)}`);
+  }
+
   // Nodes
   async listNodes(): Promise<SwarmpitNode[]> {
     return this.request<SwarmpitNode[]>("GET", "/api/nodes");
@@ -182,9 +210,17 @@ export class SwarmpitClient {
     return this.request<SwarmpitNode>("GET", `/api/nodes/${encodeURIComponent(id)}`);
   }
 
+  async getNodeTasks(id: string): Promise<SwarmpitTask[]> {
+    return this.request<SwarmpitTask[]>("GET", `/api/nodes/${encodeURIComponent(id)}/tasks`);
+  }
+
   // Tasks
   async listTasks(): Promise<SwarmpitTask[]> {
     return this.request<SwarmpitTask[]>("GET", "/api/tasks");
+  }
+
+  async getTask(id: string): Promise<SwarmpitTask> {
+    return this.request<SwarmpitTask>("GET", `/api/tasks/${encodeURIComponent(id)}`);
   }
 
   // Volumes
@@ -194,5 +230,47 @@ export class SwarmpitClient {
 
   async getVolume(name: string): Promise<SwarmpitVolume> {
     return this.request<SwarmpitVolume>("GET", `/api/volumes/${encodeURIComponent(name)}`);
+  }
+
+  async createVolume(spec: Record<string, unknown>): Promise<void> {
+    await this.request<void>("POST", "/api/volumes", spec);
+  }
+
+  async deleteVolume(name: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/volumes/${encodeURIComponent(name)}`);
+  }
+
+  // Secrets
+  async listSecrets(): Promise<Record<string, unknown>[]> {
+    return this.request<Record<string, unknown>[]>("GET", "/api/secrets");
+  }
+
+  async getSecret(id: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("GET", `/api/secrets/${encodeURIComponent(id)}`);
+  }
+
+  async createSecret(spec: { secretName: string; data: string }): Promise<void> {
+    await this.request<void>("POST", "/api/secrets", spec);
+  }
+
+  async deleteSecret(id: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/secrets/${encodeURIComponent(id)}`);
+  }
+
+  // Configs
+  async listConfigs(): Promise<Record<string, unknown>[]> {
+    return this.request<Record<string, unknown>[]>("GET", "/api/configs");
+  }
+
+  async getConfig(id: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("GET", `/api/configs/${encodeURIComponent(id)}`);
+  }
+
+  async createConfig(spec: { configName: string; data: string }): Promise<void> {
+    await this.request<void>("POST", "/api/configs", spec);
+  }
+
+  async deleteConfig(id: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/configs/${encodeURIComponent(id)}`);
   }
 }

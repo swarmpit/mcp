@@ -34,4 +34,18 @@ export function registerNodeTools(
       }
     }
   );
+
+  server.tool(
+    "get_node_tasks",
+    "List all tasks running on a specific node",
+    { id: z.string().describe("Node ID") },
+    async ({ id }) => {
+      try {
+        const tasks = await client.getNodeTasks(id);
+        return toolResult(tasks);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }

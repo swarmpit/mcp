@@ -34,4 +34,52 @@ export function registerNetworkTools(
       }
     }
   );
+
+  server.tool(
+    "create_network",
+    "Create a Docker Swarm network",
+    {
+      networkName: z.string().describe("Network name"),
+      driver: z.string().default("overlay").describe("Network driver (default: overlay)"),
+      attachable: z.boolean().default(false).describe("Whether containers can attach to this network"),
+      internal: z.boolean().default(false).describe("Restrict external access"),
+    },
+    async ({ networkName, driver, attachable, internal }) => {
+      try {
+        await client.createNetwork({
+          networkName,
+          driver,
+          attachable,
+          internal,
+          ingress: false,
+          enableIPv6: false,
+          ipam: { subnet: "", gateway: "" },
+          options: [],
+        });
+        return toolResult({ created: true, networkName });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "delete_network",
+    "Delete a Docker Swarm network. DESTRUCTIVE: requires confirm=true",
+    {
+      id: z.string().describe("Network ID or name"),
+      confirm: z.boolean().describe("Must be true to confirm deletion"),
+    },
+    async ({ id, confirm }) => {
+      if (!confirm) {
+        return toolError("Destructive operation: set confirm=true to delete this network");
+      }
+      try {
+        await client.deleteNetwork(id);
+        return toolResult({ deleted: true, id });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }
