@@ -82,4 +82,18 @@ export function registerNetworkTools(
       }
     }
   );
+
+  server.tool(
+    "get_network_services",
+    "List services using a specific network",
+    { id: z.string().describe("Network ID or name") },
+    async ({ id }) => {
+      try {
+        const services = await client.getNetworkServices(id);
+        return toolResult(services);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }

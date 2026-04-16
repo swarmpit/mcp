@@ -79,4 +79,18 @@ export function registerConfigTools(
       }
     }
   );
+
+  server.tool(
+    "get_config_services",
+    "List services using a specific config",
+    { id: z.string().describe("Config ID or name") },
+    async ({ id }) => {
+      try {
+        const services = await client.getConfigServices(id);
+        return toolResult(services);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }

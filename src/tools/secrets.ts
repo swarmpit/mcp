@@ -83,4 +83,18 @@ export function registerSecretTools(
       }
     }
   );
+
+  server.tool(
+    "get_secret_services",
+    "List services using a specific secret",
+    { id: z.string().describe("Secret ID or name") },
+    async ({ id }) => {
+      try {
+        const services = await client.getSecretServices(id);
+        return toolResult(services);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }

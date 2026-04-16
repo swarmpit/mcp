@@ -71,4 +71,18 @@ export function registerVolumeTools(
       }
     }
   );
+
+  server.tool(
+    "get_volume_services",
+    "List services using a specific volume",
+    { name: z.string().describe("Volume name") },
+    async ({ name }) => {
+      try {
+        const services = await client.getVolumeServices(name);
+        return toolResult(services);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }

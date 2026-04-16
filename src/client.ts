@@ -180,6 +180,26 @@ export class SwarmpitClient {
     return this.request<SwarmpitNetwork[]>("GET", `/api/stacks/${encodeURIComponent(name)}/networks`);
   }
 
+  async getStackCompose(name: string): Promise<{ compose: string }> {
+    return this.request<{ compose: string }>("GET", `/api/stacks/${encodeURIComponent(name)}/compose`);
+  }
+
+  async getStackSecrets(name: string): Promise<Record<string, unknown>[]> {
+    return this.request<Record<string, unknown>[]>("GET", `/api/stacks/${encodeURIComponent(name)}/secrets`);
+  }
+
+  async getStackConfigs(name: string): Promise<Record<string, unknown>[]> {
+    return this.request<Record<string, unknown>[]>("GET", `/api/stacks/${encodeURIComponent(name)}/configs`);
+  }
+
+  async createStackFile(name: string, compose: string): Promise<void> {
+    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/file`, { name, spec: { compose } });
+  }
+
+  async deleteStackFile(name: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/stacks/${encodeURIComponent(name)}/file`);
+  }
+
   async deleteStack(name: string): Promise<void> {
     await this.request<void>("DELETE", `/api/stacks/${encodeURIComponent(name)}`);
   }
@@ -191,6 +211,10 @@ export class SwarmpitClient {
 
   async getNetwork(id: string): Promise<SwarmpitNetwork> {
     return this.request<SwarmpitNetwork>("GET", `/api/networks/${encodeURIComponent(id)}`);
+  }
+
+  async getNetworkServices(id: string): Promise<SwarmpitService[]> {
+    return this.request<SwarmpitService[]>("GET", `/api/networks/${encodeURIComponent(id)}/services`);
   }
 
   async createNetwork(spec: Record<string, unknown>): Promise<void> {
@@ -208,6 +232,14 @@ export class SwarmpitClient {
 
   async getNode(id: string): Promise<SwarmpitNode> {
     return this.request<SwarmpitNode>("GET", `/api/nodes/${encodeURIComponent(id)}`);
+  }
+
+  async editNode(id: string, spec: Record<string, unknown>): Promise<void> {
+    await this.request<void>("POST", `/api/nodes/${encodeURIComponent(id)}`, spec);
+  }
+
+  async deleteNode(id: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/nodes/${encodeURIComponent(id)}`);
   }
 
   async getNodeTasks(id: string): Promise<SwarmpitTask[]> {
@@ -232,6 +264,10 @@ export class SwarmpitClient {
     return this.request<SwarmpitVolume>("GET", `/api/volumes/${encodeURIComponent(name)}`);
   }
 
+  async getVolumeServices(name: string): Promise<SwarmpitService[]> {
+    return this.request<SwarmpitService[]>("GET", `/api/volumes/${encodeURIComponent(name)}/services`);
+  }
+
   async createVolume(spec: Record<string, unknown>): Promise<void> {
     await this.request<void>("POST", "/api/volumes", spec);
   }
@@ -249,6 +285,10 @@ export class SwarmpitClient {
     return this.request<Record<string, unknown>>("GET", `/api/secrets/${encodeURIComponent(id)}`);
   }
 
+  async getSecretServices(id: string): Promise<SwarmpitService[]> {
+    return this.request<SwarmpitService[]>("GET", `/api/secrets/${encodeURIComponent(id)}/services`);
+  }
+
   async createSecret(spec: { secretName: string; data: string }): Promise<void> {
     await this.request<void>("POST", "/api/secrets", spec);
   }
@@ -264,6 +304,10 @@ export class SwarmpitClient {
 
   async getConfig(id: string): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>("GET", `/api/configs/${encodeURIComponent(id)}`);
+  }
+
+  async getConfigServices(id: string): Promise<SwarmpitService[]> {
+    return this.request<SwarmpitService[]>("GET", `/api/configs/${encodeURIComponent(id)}/services`);
   }
 
   async createConfig(spec: { configName: string; data: string }): Promise<void> {

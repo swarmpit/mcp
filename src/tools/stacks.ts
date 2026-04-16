@@ -190,4 +190,85 @@ export function registerStackTools(
       }
     }
   );
+
+  server.tool(
+    "get_stack_compose",
+    "Get the generated compose YAML for a stack",
+    { name: z.string().describe("Stack name") },
+    async ({ name }) => {
+      try {
+        const compose = await client.getStackCompose(name);
+        if (redact === "none") return toolResult(compose);
+        return toolResult({ compose: sanitizeComposeYaml(compose.compose, redact === "all") });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "get_stack_secrets",
+    "List all secrets in a stack",
+    { name: z.string().describe("Stack name") },
+    async ({ name }) => {
+      try {
+        const secrets = await client.getStackSecrets(name);
+        return toolResult(secrets);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "get_stack_configs",
+    "List all configs in a stack",
+    { name: z.string().describe("Stack name") },
+    async ({ name }) => {
+      try {
+        const configs = await client.getStackConfigs(name);
+        return toolResult(configs);
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "create_stack_file",
+    "Upload/create a compose file for a stack",
+    {
+      name: z.string().describe("Stack name"),
+      compose: z.string().describe("Docker Compose YAML"),
+    },
+    async ({ name, compose }) => {
+      try {
+        const resolved = resolveComposeEnvRefs(compose);
+        await client.createStackFile(name, resolved);
+        return toolResult({ created: true, name });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "delete_stack_file",
+    "Delete the compose file for a stack. DESTRUCTIVE: requires confirm=true",
+    {
+      name: z.string().describe("Stack name"),
+      confirm: z.boolean().describe("Must be true to confirm deletion"),
+    },
+    async ({ name, confirm }) => {
+      if (!confirm) {
+        return toolError("Destructive operation: set confirm=true to delete this stack file");
+      }
+      try {
+        await client.deleteStackFile(name);
+        return toolResult({ deleted: true, name });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
 }
