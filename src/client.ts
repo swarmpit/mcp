@@ -125,7 +125,10 @@ export class SwarmpitClient {
   }
 
   async getServiceCompose(id: string): Promise<{ compose: string }> {
-    return this.request<{ compose: string }>("GET", `/api/services/${encodeURIComponent(id)}/compose`);
+    const result = await this.request<{ spec?: { compose: string }; compose?: string }>(
+      "GET", `/api/services/${encodeURIComponent(id)}/compose`
+    );
+    return { compose: result.spec?.compose ?? result.compose ?? "" };
   }
 
   async getServiceNetworks(id: string): Promise<SwarmpitNetwork[]> {
@@ -186,7 +189,10 @@ export class SwarmpitClient {
   }
 
   async getStackCompose(name: string): Promise<{ compose: string }> {
-    return this.request<{ compose: string }>("GET", `/api/stacks/${encodeURIComponent(name)}/compose`);
+    const result = await this.request<{ spec?: { compose: string }; compose?: string }>(
+      "GET", `/api/stacks/${encodeURIComponent(name)}/compose`
+    );
+    return { compose: result.spec?.compose ?? result.compose ?? "" };
   }
 
   async getStackSecrets(name: string): Promise<Record<string, unknown>[]> {
