@@ -91,7 +91,8 @@ export class SwarmpitClient {
     return this.request<SwarmpitService>("GET", `/api/services/${encodeURIComponent(id)}`);
   }
 
-  async getServiceLogs(id: string, since = "0"): Promise<SwarmpitLogEntry[]> {
+  async getServiceLogs(id: string, since = "5m"): Promise<SwarmpitLogEntry[]> {
+    // Swarmpit accepts Go duration strings: "1s", "1m", "1h", "24h" etc.
     return this.request<SwarmpitLogEntry[]>("GET", `/api/services/${encodeURIComponent(id)}/logs?since=${encodeURIComponent(since)}`);
   }
 

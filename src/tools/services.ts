@@ -43,7 +43,7 @@ export function registerServiceTools(
     "Get logs for a Docker Swarm service",
     {
       id: z.string().describe("Service ID or name"),
-      since: z.string().optional().describe("Only return logs after this timestamp (ISO 8601)"),
+      since: z.string().optional().describe("Time window as Go duration (e.g. '30s', '5m', '1h', '24h'). Default: 5m"),
     },
     async ({ id, since }) => {
       try {
