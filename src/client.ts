@@ -302,7 +302,9 @@ export class SwarmpitClient {
   }
 
   async createSecret(spec: { secretName: string; data: string }): Promise<void> {
-    await this.request<void>("POST", "/api/secrets", spec);
+    // Swarmpit expects base64-encoded data
+    const encoded = Buffer.from(spec.data, "utf-8").toString("base64");
+    await this.request<void>("POST", "/api/secrets", { ...spec, data: encoded });
   }
 
   async deleteSecret(id: string): Promise<void> {
@@ -323,7 +325,9 @@ export class SwarmpitClient {
   }
 
   async createConfig(spec: { configName: string; data: string }): Promise<void> {
-    await this.request<void>("POST", "/api/configs", spec);
+    // Swarmpit expects base64-encoded data
+    const encoded = Buffer.from(spec.data, "utf-8").toString("base64");
+    await this.request<void>("POST", "/api/configs", { ...spec, data: encoded });
   }
 
   async deleteConfig(id: string): Promise<void> {
