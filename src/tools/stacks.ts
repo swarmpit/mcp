@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { RedactMode } from "../config.js";
 import { SwarmpitClient } from "../client.js";
 import { sanitizeServices, sanitizeComposeYaml, resolveComposeEnvRefs, restoreRedactedValues } from "../sanitize.js";
-import { toolResult, toolError } from "./helpers.js";
+import { toolResult, toolError, resolveData } from "./helpers.js";
 
 export function registerStackTools(
   server: McpServer,
@@ -49,16 +49,22 @@ export function registerStackTools(
     }
   );
 
+  const composeInput = z.union([
+    z.string(),
+    z.object({ $file: z.string() }).describe('Read compose from local file path'),
+  ]);
+
   server.tool(
     "create_stack",
-    "Create a new Docker Swarm stack from a compose YAML. Use $env:VAR_NAME for secret values.",
+    "Create a new Docker Swarm stack from compose YAML. Use $env:VAR_NAME for secret values, or { $file: /path } to read from a local file.",
     {
       name: z.string().describe("Stack name"),
-      compose: z.string().describe("Docker Compose YAML. Use $env:VAR_NAME for secrets."),
+      compose: composeInput.describe("Compose YAML string or { $file: /path }"),
     },
     async ({ name, compose }) => {
       try {
-        const resolved = resolveComposeEnvRefs(compose);
+        const yaml = resolveData(compose);
+        const resolved = resolveComposeEnvRefs(yaml);
         await client.createStack({ name, spec: { compose: resolved } });
         return toolResult({ created: true, name });
       } catch (e) {
@@ -69,15 +75,16 @@ export function registerStackTools(
 
   server.tool(
     "update_stack",
-    "Update a Docker Swarm stack. [REDACTED] values are preserved. Use $env:VAR_NAME for new secrets.",
+    "Update a Docker Swarm stack. [REDACTED] values are preserved. Use $env:VAR_NAME for new secrets, or { $file: /path } to read from a local file.",
     {
       name: z.string().describe("Stack name"),
-      compose: z.string().describe("Updated compose YAML. Leave [REDACTED] for unchanged secrets."),
+      compose: composeInput.describe("Compose YAML string or { $file: /path }. Leave [REDACTED] for unchanged secrets."),
     },
     async ({ name, compose }) => {
       try {
+        const yaml = resolveData(compose);
         const current = await client.getStackFile(name).catch(() => ({ compose: "" }));
-        const restored = restoreRedactedValues(compose, current.compose);
+        const restored = restoreRedactedValues(yaml, current.compose);
         const resolved = resolveComposeEnvRefs(restored);
         await client.updateStack(name, resolved);
         return toolResult({ updated: true, name });
@@ -236,14 +243,15 @@ export function registerStackTools(
 
   server.tool(
     "create_stack_file",
-    "Upload/create a compose file for a stack",
+    "Upload/create a compose file for a stack. Accepts a string or { $file: /path }.",
     {
       name: z.string().describe("Stack name"),
-      compose: z.string().describe("Docker Compose YAML"),
+      compose: composeInput.describe("Compose YAML string or { $file: /path }"),
     },
     async ({ name, compose }) => {
       try {
-        const resolved = resolveComposeEnvRefs(compose);
+        const yaml = resolveData(compose);
+        const resolved = resolveComposeEnvRefs(yaml);
         await client.createStackFile(name, resolved);
         return toolResult({ created: true, name });
       } catch (e) {

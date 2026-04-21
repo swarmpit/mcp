@@ -250,16 +250,18 @@ Add custom patterns via `SWARMPIT_REDACT_PATTERNS`:
 
 Secrets in `.mcp.json` `env` are passed to the MCP server process but **never sent to the LLM**.
 
-### Configs and secrets from local files
+### Reading from local files
 
-For large config data (HTML pages, compose files, certs) or to avoid sending data through the LLM context, use `$file`:
+For large payloads (HTML pages, compose files, certs) use `$file` to have the MCP server read from disk instead of passing content through the LLM context:
 
 ```
 create_config(configName: "my_dashboard", data: { "$file": "/path/to/index.html" })
 create_secret(secretName: "tls_cert", data: { "$file": "/etc/ssl/server.crt" })
+create_stack(name: "myapp", compose: { "$file": "/path/to/stack.yml" })
+update_stack(name: "myapp", compose: { "$file": "/path/to/stack.yml" })
 ```
 
-The MCP server reads the file locally and sends its contents to Swarmpit. Saves context/credits on anything larger than a few hundred bytes.
+Saves context/credits on anything larger than a few hundred bytes. `$env:` references inside the file are still resolved before sending to Swarmpit.
 
 ### Service env vars
 
