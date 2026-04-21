@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RedactMode } from "../config.js";
 import { SwarmpitClient } from "../client.js";
-import { toolResult, toolError, resolveEnvRef } from "./helpers.js";
+import { toolResult, toolError, resolveData } from "./helpers.js";
 
 function redactSecret(secret: Record<string, unknown>, redact: RedactMode): Record<string, unknown> {
   if (redact === "none") return secret;
@@ -45,17 +45,18 @@ export function registerSecretTools(
 
   server.tool(
     "create_secret",
-    "Create a Docker Swarm secret. Use { $env: VAR_NAME } for the data to resolve locally.",
+    "Create a Docker Swarm secret. Data can be plain, { $env: VAR_NAME } to resolve from env, or { $file: /path } to read from a local file (avoids sending large content through LLM context).",
     {
       secretName: z.string().describe("Secret name"),
       data: z.union([
         z.string(),
         z.object({ $env: z.string() }).describe('Reference to local env var'),
-      ]).describe("Secret data — plain string or { $env: VAR_NAME }"),
+        z.object({ $file: z.string() }).describe('Read from local file path'),
+      ]).describe("Secret data — string, { $env: VAR_NAME }, or { $file: /path }"),
     },
     async ({ secretName, data }) => {
       try {
-        const resolved = resolveEnvRef(data);
+        const resolved = resolveData(data);
         await client.createSecret({ secretName, data: resolved });
         return toolResult({ created: true, secretName });
       } catch (e) {

@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { toolResult, toolError, resolveEnvRef, prepareServiceForUpdate } from "../tools/helpers.js";
+import { toolResult, toolError, resolveEnvRef, prepareServiceForUpdate, resolveData } from "../tools/helpers.js";
+import { writeFileSync, unlinkSync } from "node:fs";
 
 describe("toolResult", () => {
   it("wraps data as JSON text content", () => {
@@ -112,5 +113,35 @@ describe("prepareServiceForUpdate", () => {
     assert.equal(repo.name, "nginx");
     assert.equal(repo.tag, "alpine");
     assert.equal("imageDigest" in repo, false);
+  });
+});
+
+describe("resolveData", () => {
+  it("returns plain strings as-is", () => {
+    assert.equal(resolveData("hello"), "hello");
+  });
+
+  it("reads from file path via $file", () => {
+    const path = "/tmp/mcp-swarmpit-test-data.txt";
+    writeFileSync(path, "contents from file");
+    try {
+      assert.equal(resolveData({ $file: path }), "contents from file");
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  it("resolves $env references", () => {
+    process.env.TEST_DATA_VAR = "env-value";
+    assert.equal(resolveData({ $env: "TEST_DATA_VAR" }), "env-value");
+    delete process.env.TEST_DATA_VAR;
+  });
+
+  it("throws on missing file", () => {
+    assert.throws(() => resolveData({ $file: "/nonexistent/path/xyz" }), /could not be read/);
+  });
+
+  it("throws on invalid value type", () => {
+    assert.throws(() => resolveData(42), /Invalid data/);
   });
 });

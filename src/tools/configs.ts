@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RedactMode } from "../config.js";
 import { SwarmpitClient } from "../client.js";
-import { toolResult, toolError } from "./helpers.js";
+import { toolResult, toolError, resolveData } from "./helpers.js";
 
 function redactConfig(config: Record<string, unknown>, redact: RedactMode): Record<string, unknown> {
   if (redact === "none") return config;
@@ -45,14 +45,19 @@ export function registerConfigTools(
 
   server.tool(
     "create_config",
-    "Create a Docker Swarm config",
+    "Create a Docker Swarm config. Data can be plain, { $env: VAR_NAME } to resolve from env, or { $file: /path } to read from a local file (avoids sending large content through LLM context).",
     {
       configName: z.string().describe("Config name"),
-      data: z.string().describe("Config data (plaintext)"),
+      data: z.union([
+        z.string(),
+        z.object({ $env: z.string() }).describe('Reference to local env var'),
+        z.object({ $file: z.string() }).describe('Read from local file path'),
+      ]).describe("Config data — string, { $env: VAR_NAME }, or { $file: /path }"),
     },
     async ({ configName, data }) => {
       try {
-        await client.createConfig({ configName, data });
+        const resolved = resolveData(data);
+        await client.createConfig({ configName, data: resolved });
         return toolResult({ created: true, configName });
       } catch (e) {
         return toolError(e);

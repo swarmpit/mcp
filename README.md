@@ -198,7 +198,7 @@ Add custom patterns via `SWARMPIT_REDACT_PATTERNS`:
 |------|-------------|
 | `list_secrets` | List all secrets (data redacted) |
 | `get_secret` | Get secret details (data redacted) |
-| `create_secret` | Create a secret (supports `$env` references) |
+| `create_secret` | Create a secret (supports `$env` / `$file` references) |
 | `delete_secret` | Delete (requires `confirm: true`) |
 | `get_secret_services` | List services using a secret |
 
@@ -208,7 +208,7 @@ Add custom patterns via `SWARMPIT_REDACT_PATTERNS`:
 |------|-------------|
 | `list_configs` | List all configs (data redacted) |
 | `get_config` | Get config details (data redacted) |
-| `create_config` | Create a config |
+| `create_config` | Create a config (supports `$env` / `$file` references) |
 | `delete_config` | Delete (requires `confirm: true`) |
 | `get_config_services` | List services using a config |
 
@@ -249,6 +249,17 @@ Add custom patterns via `SWARMPIT_REDACT_PATTERNS`:
 ## Secret handling
 
 Secrets in `.mcp.json` `env` are passed to the MCP server process but **never sent to the LLM**.
+
+### Configs and secrets from local files
+
+For large config data (HTML pages, compose files, certs) or to avoid sending data through the LLM context, use `$file`:
+
+```
+create_config(configName: "my_dashboard", data: { "$file": "/path/to/index.html" })
+create_secret(secretName: "tls_cert", data: { "$file": "/etc/ssl/server.crt" })
+```
+
+The MCP server reads the file locally and sends its contents to Swarmpit. Saves context/credits on anything larger than a few hundred bytes.
 
 ### Service env vars
 

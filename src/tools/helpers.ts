@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 export function toolResult(data: unknown): CallToolResult {
@@ -60,5 +61,31 @@ export function resolveEnvRef(
   }
   throw new Error(
     `Invalid env var value: expected a string or { "$env": "VAR_NAME" }`
+  );
+}
+
+/**
+ * Resolve a data value that may be a plain string, { $file: path }, or { $env: var }.
+ * Used for config/secret data to avoid sending large payloads through the LLM context.
+ */
+export function resolveData(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    if ("$file" in value && typeof (value as Record<string, unknown>).$file === "string") {
+      const path = (value as Record<string, string>).$file;
+      try {
+        return readFileSync(path, "utf-8");
+      } catch (err) {
+        throw new Error(
+          `$file reference "${path}" could not be read: ${err instanceof Error ? err.message : err}`
+        );
+      }
+    }
+    if ("$env" in value && typeof (value as Record<string, unknown>).$env === "string") {
+      return resolveEnvRef(value);
+    }
+  }
+  throw new Error(
+    'Invalid data: expected a string, { "$file": "/path" }, or { "$env": "VAR_NAME" }'
   );
 }
