@@ -72,6 +72,10 @@ Three layers keep user secrets out of the conversation:
    - `get_stack` returns compose with sensitive values as `[REDACTED]`.
    - `update_stack` fetches the current raw compose, restores `[REDACTED]` values from it, then applies `$env:` resolution. Lets the user edit only what they need without accidentally overwriting secrets.
 
+4. **`SWARMPIT_TOKEN_FILE` to keep the token out of MCP client configs** (`config.ts::loadToken`)
+   - If `SWARMPIT_TOKEN_FILE` is set, token is read from the referenced path at startup. Takes precedence over `SWARMPIT_TOKEN`.
+   - Matters because Claude Code and similar clients can accidentally dump `.mcp.json` (with inlined `SWARMPIT_TOKEN`) to conversation via their `Read` tool. Users are directed to add a `permissions.deny` rule on `.mcp.json` and use `SWARMPIT_TOKEN_FILE` — see README "Token handling".
+
 If you add a new tool that takes user-provided data, use `resolveData` (supports plain string, `$env`, `$file`) instead of accepting raw strings for any non-trivial payload.
 
 ## Swarmpit API quirks (learned the hard way)

@@ -63,7 +63,50 @@ describe("loadConfig", () => {
 
   it("throws on missing SWARMPIT_TOKEN", () => {
     process.env.SWARMPIT_URL = "https://swarmpit.example.com";
-    assert.throws(() => loadConfig(), /SWARMPIT_TOKEN is not set/);
+    assert.throws(
+      () => loadConfig(),
+      /Neither SWARMPIT_TOKEN nor SWARMPIT_TOKEN_FILE is set/
+    );
+  });
+
+  it("loads token from SWARMPIT_TOKEN_FILE", async () => {
+    const { writeFileSync, unlinkSync, mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "mcp-token-"));
+    const path = join(dir, "token");
+    writeFileSync(path, "file-loaded-token\n"); // trailing newline should be stripped
+    try {
+      process.env.SWARMPIT_URL = "https://swarmpit.example.com";
+      process.env.SWARMPIT_TOKEN_FILE = path;
+      const config = loadConfig();
+      assert.equal(config.token, "file-loaded-token");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("SWARMPIT_TOKEN_FILE takes precedence over SWARMPIT_TOKEN", async () => {
+    const { writeFileSync, mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "mcp-token-"));
+    const path = join(dir, "token");
+    writeFileSync(path, "from-file");
+    try {
+      process.env.SWARMPIT_URL = "https://swarmpit.example.com";
+      process.env.SWARMPIT_TOKEN = "from-env";
+      process.env.SWARMPIT_TOKEN_FILE = path;
+      assert.equal(loadConfig().token, "from-file");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws when SWARMPIT_TOKEN_FILE points to missing file", () => {
+    process.env.SWARMPIT_URL = "https://swarmpit.example.com";
+    process.env.SWARMPIT_TOKEN_FILE = "/nonexistent/token-file";
+    assert.throws(() => loadConfig(), /could not be read/);
   });
 
   it("throws on invalid SWARMPIT_REDACT", () => {

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 export type RedactMode = "all" | "sensitive" | "none";
 
 export interface SwarmpitConfig {
@@ -7,12 +9,31 @@ export interface SwarmpitConfig {
   redactPatterns: string[];
 }
 
+function loadToken(): string {
+  const tokenFile = process.env.SWARMPIT_TOKEN_FILE;
+  if (tokenFile) {
+    try {
+      return readFileSync(tokenFile, "utf-8").trim();
+    } catch (err) {
+      throw new Error(
+        `SWARMPIT_TOKEN_FILE "${tokenFile}" could not be read: ${err instanceof Error ? err.message : err}`
+      );
+    }
+  }
+  const token = process.env.SWARMPIT_TOKEN;
+  if (!token) {
+    throw new Error(
+      "Neither SWARMPIT_TOKEN nor SWARMPIT_TOKEN_FILE is set. Use SWARMPIT_TOKEN_FILE to avoid storing the token in MCP client config files."
+    );
+  }
+  return token;
+}
+
 export function loadConfig(): SwarmpitConfig {
   const url = process.env.SWARMPIT_URL;
-  const token = process.env.SWARMPIT_TOKEN;
-
   if (!url) throw new Error("SWARMPIT_URL is not set");
-  if (!token) throw new Error("SWARMPIT_TOKEN is not set");
+
+  const token = loadToken();
 
   const redactRaw = process.env.SWARMPIT_REDACT;
   let redact: RedactMode = "all";

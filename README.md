@@ -87,7 +87,8 @@ Tools appear namespaced: `swarmpit-prod: list_services`, `swarmpit-staging: list
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SWARMPIT_URL` | Yes | Swarmpit instance URL |
-| `SWARMPIT_TOKEN` | Yes | API token (with or without `Bearer ` prefix) |
+| `SWARMPIT_TOKEN` | One of | API token (with or without `Bearer ` prefix). Avoid putting in `.mcp.json` — see [token handling](#token-handling). |
+| `SWARMPIT_TOKEN_FILE` | One of | Path to a file containing the token. Takes precedence over `SWARMPIT_TOKEN`. **Recommended** for production use. |
 | `SWARMPIT_REDACT` | No | Redaction mode: `all` (default), `sensitive`, or `none` |
 | `SWARMPIT_REDACT_PATTERNS` | No | Comma-separated extra patterns to redact in `sensitive` mode (regex, case-insensitive) |
 
@@ -245,6 +246,80 @@ Add custom patterns via `SWARMPIT_REDACT_PATTERNS`:
 | Tool | Description |
 |------|-------------|
 | `swarmpit_info` | Show connected URL and redaction mode |
+
+## Token handling
+
+Putting `SWARMPIT_TOKEN` directly in `.mcp.json` is convenient but risky: if anything (including Claude / the LLM) reads `.mcp.json`, the token leaks into the conversation and API logs. **Two hardening steps you should take:**
+
+### 1. Block MCP config files from being read
+
+Add this to your project `.claude/settings.json` so Claude Code refuses to `Read` credential-holding files:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Read(.mcp.json)",
+      "Read(**/.mcp.json)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*credentials*)",
+      "Read(**/secrets/**)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)"
+    ]
+  }
+}
+```
+
+### 2. Use `SWARMPIT_TOKEN_FILE` instead of inline
+
+Store the token in a file outside the repo and reference it by path. The token never appears in `.mcp.json` itself:
+
+```bash
+# Write the token to a restricted file
+install -m 600 /dev/stdin ~/.config/swarmpit/lark.token <<<'your-token-here'
+```
+
+```json
+{
+  "mcpServers": {
+    "swarmpit-lark": {
+      "command": "npx",
+      "args": ["github:swarmpit/mcp"],
+      "env": {
+        "SWARMPIT_URL": "https://swarmpit.example.com",
+        "SWARMPIT_TOKEN_FILE": "/Users/you/.config/swarmpit/lark.token",
+        "SWARMPIT_REDACT": "sensitive"
+      }
+    }
+  }
+}
+```
+
+### 3. Password manager integration
+
+For even stronger posture, have the MCP spawn with a secret manager:
+
+```json
+{
+  "swarmpit-lark": {
+    "command": "op",
+    "args": ["run", "--", "npx", "github:swarmpit/mcp"],
+    "env": {
+      "SWARMPIT_URL": "https://swarmpit.example.com",
+      "SWARMPIT_TOKEN": "op://Private/Swarmpit Lark/token",
+      "SWARMPIT_REDACT": "sensitive"
+    }
+  }
+}
+```
+
+1Password's `op run` substitutes `op://...` references at process start. macOS users can do the equivalent with `security find-generic-password` in a wrapper script.
+
+If your token has already been exposed (e.g. you saw it scroll through a log), rotate it in Swarmpit UI → Profile → API Access → regenerate.
 
 ## Secret handling
 
