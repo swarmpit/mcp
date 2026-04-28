@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/swarmpit-mcp-badge.png)](https://mseep.ai/app/swarmpit-mcp)
+
 # mcp-swarmpit
 
 MCP server for managing [Swarmpit](https://swarmpit.io) Docker Swarm instances from any MCP-compatible client. 100% Swarmpit API coverage (79 endpoints).
