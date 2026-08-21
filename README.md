@@ -51,9 +51,57 @@ Add to your `.mcp.json` (project-level) or `~/.claude.json` (global):
 
 Get your API token from Swarmpit UI: Profile → API Access → Generate token.
 
-### Multiple servers
+### Multiple instances
 
-Register each as a separate MCP server instance:
+One process can manage several Swarmpit instances. Every tool then takes an optional `server` argument naming the target — the tool set is registered once instead of once per instance, which matters because the full surface is ~79 tools and the model loads all of them for every MCP server you wire up.
+
+Point `SWARMPIT_CONFIG_FILE` at a JSON file:
+
+```json
+{
+  "default": "prod-eu",
+  "servers": {
+    "prod-eu": { "url": "https://swarmpit.eu.example.com", "tokenFile": "~/.config/swarmpit/prod-eu" },
+    "prod-us": { "url": "https://swarmpit.us.example.com", "tokenFile": "~/.config/swarmpit/prod-us" }
+  }
+}
+```
+
+```json
+{
+  "mcpServers": {
+    "swarmpit": {
+      "command": "npx",
+      "args": ["github:swarmpit/mcp"],
+      "env": { "SWARMPIT_CONFIG_FILE": "~/.config/swarmpit/servers.json", "SWARMPIT_REDACT": "sensitive" }
+    }
+  }
+}
+```
+
+Or without a file, using per-name env vars (`SWARMPIT_<NAME>_URL`, with `-` becoming `_` and the name upper-cased):
+
+```json
+"env": {
+  "SWARMPIT_SERVERS": "prod-eu,prod-us",
+  "SWARMPIT_DEFAULT_SERVER": "prod-eu",
+  "SWARMPIT_PROD_EU_URL": "https://swarmpit.eu.example.com",
+  "SWARMPIT_PROD_EU_TOKEN_FILE": "~/.config/swarmpit/prod-eu",
+  "SWARMPIT_PROD_US_URL": "https://swarmpit.us.example.com",
+  "SWARMPIT_PROD_US_TOKEN_FILE": "~/.config/swarmpit/prod-us"
+}
+```
+
+Then: `list_services({ server: "prod-us" })`. Omitting `server` uses the default. If several instances are configured and no default is set, the argument is required — a forgotten argument will never silently pick a cluster for you. `swarmpit_info` lists what's configured.
+
+#### Which pattern to use
+
+**Consolidate within a trust tier, isolate across tiers.**
+
+- **One MCP server, several instances** — the default for instances in the same trust tier (several prod clusters, several staging clusters). This is where the duplicated tool schemas actually cost you.
+- **Separate MCP servers** — the right answer *across* trust tiers. Keeping prod in its own process means a test or play conversation cannot reach the prod token at all, no matter what the model is talked into. That is a stronger guarantee than a `server` argument the model chooses itself.
+
+The two compose. One MCP server holding every prod cluster, a second holding every test cluster, gets you both the schema saving and a real boundary where it matters:
 
 ```json
 {
@@ -61,36 +109,33 @@ Register each as a separate MCP server instance:
     "swarmpit-prod": {
       "command": "npx",
       "args": ["github:swarmpit/mcp"],
-      "env": {
-        "SWARMPIT_URL": "https://swarmpit.prod.example.com",
-        "SWARMPIT_TOKEN": "prod-token",
-        "SWARMPIT_REDACT": "sensitive"
-      }
+      "env": { "SWARMPIT_CONFIG_FILE": "~/.config/swarmpit/prod.json", "SWARMPIT_REDACT": "sensitive" }
     },
-    "swarmpit-staging": {
+    "swarmpit-test": {
       "command": "npx",
       "args": ["github:swarmpit/mcp"],
-      "env": {
-        "SWARMPIT_URL": "https://swarmpit.staging.example.com",
-        "SWARMPIT_TOKEN": "staging-token",
-        "SWARMPIT_REDACT": "sensitive"
-      }
+      "env": { "SWARMPIT_CONFIG_FILE": "~/.config/swarmpit/test.json", "SWARMPIT_REDACT": "none" }
     }
   }
 }
 ```
 
-Tools appear namespaced: `swarmpit-prod: list_services`, `swarmpit-staging: list_services`.
+A single-instance setup is unchanged in every respect: `SWARMPIT_URL` + `SWARMPIT_TOKEN`/`SWARMPIT_TOKEN_FILE` still work, and no `server` argument is added to any tool.
 
 ### Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SWARMPIT_URL` | Yes | Swarmpit instance URL |
-| `SWARMPIT_TOKEN` | One of | API token (with or without `Bearer ` prefix). Avoid putting in `.mcp.json` — see [token handling](#token-handling). |
-| `SWARMPIT_TOKEN_FILE` | One of | Path to a file containing the token. Takes precedence over `SWARMPIT_TOKEN`. **Recommended** for production use. |
-| `SWARMPIT_REDACT` | No | Redaction mode: `all` (default), `sensitive`, or `none` |
+| `SWARMPIT_URL` | Yes¹ | Swarmpit instance URL (single-instance setup) |
+| `SWARMPIT_TOKEN` | One of¹ | API token (with or without `Bearer ` prefix). Avoid putting in `.mcp.json` — see [token handling](#token-handling). |
+| `SWARMPIT_TOKEN_FILE` | One of¹ | Path to a file containing the token. Takes precedence over `SWARMPIT_TOKEN`. **Recommended** for production use. |
+| `SWARMPIT_CONFIG_FILE` | Yes¹ | Path to a JSON file defining several instances. Takes precedence over everything below. |
+| `SWARMPIT_SERVERS` | Yes¹ | Comma-separated instance names, each configured via `SWARMPIT_<NAME>_URL` and `SWARMPIT_<NAME>_TOKEN`/`_TOKEN_FILE` |
+| `SWARMPIT_DEFAULT_SERVER` | No | Instance used when a tool call omits `server`. Without it, the argument is required. |
+| `SWARMPIT_REDACT` | No | Redaction mode: `all` (default), `sensitive`, or `none`. Applies to all instances in the process. |
 | `SWARMPIT_REDACT_PATTERNS` | No | Comma-separated extra patterns to redact in `sensitive` mode (regex, case-insensitive) |
+
+¹ Exactly one of the three forms: `SWARMPIT_CONFIG_FILE`, `SWARMPIT_SERVERS`, or `SWARMPIT_URL`. They are tried in that order.
 
 ### Redaction modes
 
