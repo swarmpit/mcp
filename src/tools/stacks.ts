@@ -2,7 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RedactMode } from "../config.js";
 import { SwarmpitClient } from "../client.js";
-import { sanitizeServices, sanitizeComposeYaml, resolveComposeEnvRefs, restoreRedactedValues } from "../sanitize.js";
+import {
+  sanitizeServices,
+  sanitizeComposeYaml,
+  resolveComposeEnvRefs,
+  restoreRedactedValues,
+  extractComposeEnvVars,
+  redactedComposeKeys,
+} from "../sanitize.js";
 import { toolResult, toolError, resolveData } from "./helpers.js";
 
 export function registerStackTools(
@@ -83,11 +90,36 @@ export function registerStackTools(
     async ({ name, compose }) => {
       try {
         const yaml = resolveData(compose);
-        const current = await client.getStackFile(name).catch(() => ({ compose: "" }));
-        const restored = restoreRedactedValues(yaml, current.compose);
+        // Live service state is the source of truth — the stored stack file goes
+        // stale whenever a var is changed via update_service_env or the UI.
+        const [live, file] = await Promise.all([
+          client.getStackCompose(name).catch(() => ({ compose: "" })),
+          client.getStackFile(name).catch(() => ({ compose: "" })),
+        ]);
+        const restored = restoreRedactedValues(
+          restoreRedactedValues(yaml, live.compose),
+          file.compose
+        );
         const resolved = resolveComposeEnvRefs(restored);
         await client.updateStack(name, resolved);
-        return toolResult({ updated: true, name });
+
+        const liveVars = extractComposeEnvVars(live.compose);
+        const fileVars = extractComposeEnvVars(file.compose);
+        const stale = redactedComposeKeys(yaml).filter((key) => {
+          const l = liveVars.get(key);
+          return l !== undefined && fileVars.has(key) && fileVars.get(key) !== l;
+        });
+
+        return toolResult({
+          updated: true,
+          name,
+          ...(stale.length
+            ? {
+                warning:
+                  `Stack file was stale for ${stale.join(", ")} — restored the live service value, not the stored stack-file value.`,
+              }
+            : {}),
+        });
       } catch (e) {
         return toolError(e);
       }

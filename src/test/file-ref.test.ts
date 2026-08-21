@@ -36,6 +36,7 @@ function mockClient() {
     createStack: record("createStack"),
     updateStack: record("updateStack"),
     getStackFile: () => Promise.resolve({ compose: "" }),
+    getStackCompose: () => Promise.resolve({ compose: "" }),
     createStackFile: record("createStackFile"),
   };
 }

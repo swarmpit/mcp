@@ -94,11 +94,13 @@ Tools appear namespaced: `swarmpit-prod: list_services`, `swarmpit-staging: list
 
 ### Redaction modes
 
-| Mode | Env vars | Secrets/Configs data |
-|------|----------|---------------------|
-| `all` | All values redacted | Redacted |
-| `sensitive` | Only names matching patterns | Redacted |
-| `none` | No redaction | Not redacted |
+| Mode | Env vars | Secrets/Configs data | User records |
+|------|----------|---------------------|--------------|
+| `all` | All values redacted | Redacted | Identity only (`_id`, `username`, `role`, `email`) |
+| `sensitive` | Only names matching patterns | Redacted | Identity only |
+| `none` | No redaction | Not redacted | Full record |
+
+User records never contain a password hash (the Swarmpit server strips it), but in the non-`none` modes the API-token metadata (`jti`, `mask`) and CouchDB `_rev` are dropped too — `list_users`/`get_user` report only `hasApiToken: true`.
 
 > **Warning:** `none` mode sends all environment variables, secrets, and config data in full to the LLM provider. Only use this with a local model (e.g. via ollama/opencode) or on servers that definitely do not contain any sensitive environment variables or configs. Never use `none` with cloud-hosted LLM providers on production infrastructure.
 
@@ -217,11 +219,19 @@ Add custom patterns via `SWARMPIT_REDACT_PATTERNS`:
 
 | Tool | Description |
 |------|-------------|
-| `list_users` | List all Swarmpit users |
-| `get_user` | Get user details |
-| `create_user` | Create a user |
-| `edit_user` | Edit user properties |
+| `list_users` | List all Swarmpit users (redacted) |
+| `get_user` | Get user details (redacted) |
+| `create_user` | Create a user (password accepts `$env`/`$file`) |
+| `edit_user` | Edit user properties (`spec.password` accepts `$env`/`$file`) |
 | `delete_user` | Delete (requires `confirm: true`) |
+
+Pass user passwords by reference so the plaintext never enters the conversation or the tool-call transcript:
+
+```json
+{ "username": "svc", "role": "user", "password": { "$env": "NEW_USER_PASSWORD" } }
+```
+
+`{ "$file": "/path/to/password" }` works too. A literal string is still accepted, but it is recorded verbatim in the model's context and in the session transcript.
 
 ### Dashboard
 
@@ -381,6 +391,12 @@ Use `$env:VAR_NAME` for new secrets in compose:
 environment:
   NEW_SECRET: $env:MY_SECRET     # resolved locally
 ```
+
+Preserved values are read from the **live service state**, not the stored stack file — the two diverge whenever a var is changed through `update_service_env` or the Swarmpit UI. If they disagree for a var being restored, `update_stack` says so in its result.
+
+### Service specs
+
+`update_service` applies the same protection: any env var left as `[REDACTED]` is restored from the live service before the write, so a `get_service` → edit one field → `update_service` round-trip can't overwrite secrets with the placeholder. Restored names are listed in the result as `restoredVars`.
 
 ## Development
 

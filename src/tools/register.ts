@@ -30,7 +30,7 @@ export function registerAllTools(
   registerVolumeTools(server, client);
   registerSecretTools(server, client, redact);
   registerConfigTools(server, client, redact);
-  registerAdminTools(server, client);
+  registerAdminTools(server, client, redact);
   registerDashboardTools(server, client);
   registerTimeseriesTools(server, client);
 }

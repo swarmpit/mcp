@@ -151,7 +151,7 @@ export function resolveComposeEnvRefs(yaml: string): string {
  * Build env var lookup from raw compose YAML. Extracts KEY=value pairs
  * so [REDACTED] values can be restored from the original.
  */
-function extractComposeEnvVars(yaml: string): Map<string, string> {
+export function extractComposeEnvVars(yaml: string): Map<string, string> {
   const vars = new Map<string, string>();
   if (!yaml) return vars;
 
@@ -170,6 +170,15 @@ function extractComposeEnvVars(yaml: string): Map<string, string> {
   }
 
   return vars;
+}
+
+/** Env var names left as [REDACTED] in an edited compose. */
+export function redactedComposeKeys(yaml: string): string[] {
+  const keys = new Set<string>();
+  if (!yaml) return [];
+  for (const m of yaml.matchAll(/^\s+([A-Z_][A-Z0-9_]*):\s*\[REDACTED\]$/gm)) keys.add(m[1]);
+  for (const m of yaml.matchAll(/^\s+-\s+([A-Z_][A-Z0-9_]*)=\[REDACTED\]$/gm)) keys.add(m[1]);
+  return [...keys];
 }
 
 /**

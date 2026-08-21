@@ -21,6 +21,8 @@ export function toolError(error: unknown): CallToolResult {
  * - Strips null values (API rejects them for optional fields)
  * - Strips read-only fields not accepted by the edit endpoint
  * - Trims repository to { name, tag } (API rejects imageDigest/image)
+ * - Normalises nested nulls the backend spec rejects even though its own
+ *   GET emits them (deployment.maxReplicas, mounts[].volumeOptions[.driver.options])
  */
 export function prepareServiceForUpdate(service: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -37,7 +39,63 @@ export function prepareServiceForUpdate(service: Record<string, unknown>): Recor
     result.repository = { name: repo.name, tag: repo.tag };
   }
 
+  const deployment = result.deployment as Record<string, unknown> | undefined;
+  if (deployment && deployment.maxReplicas === null) {
+    result.deployment = { ...deployment, maxReplicas: 0 };
+  }
+
+  if (Array.isArray(result.mounts)) {
+    result.mounts = result.mounts.map((mount) => normalizeMount(mount));
+  }
+
   return result;
+}
+
+function normalizeMount(mount: unknown): unknown {
+  if (!mount || typeof mount !== "object") return mount;
+  const m = { ...(mount as Record<string, unknown>) };
+
+  // Bind mounts come back with volumeOptions: null; the spec wants a map or nothing.
+  if (m.volumeOptions === null) {
+    delete m.volumeOptions;
+    return m;
+  }
+  if (m.volumeOptions && typeof m.volumeOptions === "object") {
+    const vo = { ...(m.volumeOptions as Record<string, unknown>) };
+    const driver = vo.driver as Record<string, unknown> | null | undefined;
+    if (driver && typeof driver === "object" && driver.options === null) {
+      vo.driver = { ...driver, options: {} };
+    }
+    m.volumeOptions = vo;
+  }
+  return m;
+}
+
+/**
+ * Restore env vars whose value is the literal "[REDACTED]" from the live
+ * service, so a get_service → edit → update_service round-trip can't
+ * overwrite real secrets with the redaction placeholder.
+ */
+export function restoreRedactedVariables(
+  incoming: unknown,
+  live: { name: string; value: string }[] | undefined
+): { variables: unknown; restored: string[] } {
+  if (!Array.isArray(incoming)) return { variables: incoming, restored: [] };
+
+  const liveByName = new Map((live ?? []).map((v) => [v.name, v.value]));
+  const restored: string[] = [];
+
+  const variables = incoming.map((entry) => {
+    if (!entry || typeof entry !== "object") return entry;
+    const v = entry as Record<string, unknown>;
+    if (v.value !== "[REDACTED]" || typeof v.name !== "string") return entry;
+    const original = liveByName.get(v.name);
+    if (original === undefined) return entry;
+    restored.push(v.name);
+    return { ...v, value: original };
+  });
+
+  return { variables, restored };
 }
 
 export function resolveEnvRef(

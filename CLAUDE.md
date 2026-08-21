@@ -68,9 +68,12 @@ Three layers keep user secrets out of the conversation:
    - `create_stack` / `update_stack` / `create_stack_file` accept YAML with `$env:VAR_NAME` tokens (string or `{ $file: /path }`) — `resolveComposeEnvRefs` replaces them before sending.
    - `create_secret` / `create_config` accept `{ $file: /path }` to read payload from disk (saves thousands of tokens on HTML pages, certs, large compose files).
 
-3. **`[REDACTED]` round-trip on stack update** (`sanitize.ts::restoreRedactedValues`)
+3. **`[REDACTED]` round-trip on writes** (`sanitize.ts::restoreRedactedValues`, `helpers.ts::restoreRedactedVariables`)
    - `get_stack` returns compose with sensitive values as `[REDACTED]`.
-   - `update_stack` fetches the current raw compose, restores `[REDACTED]` values from it, then applies `$env:` resolution. Lets the user edit only what they need without accidentally overwriting secrets.
+   - `update_stack` restores `[REDACTED]` from `getStackCompose` (live service state) first, falling back to `getStackFile` (stored record) — the stack file goes stale the moment a var is changed via `update_service_env` or the UI. Divergence between the two is reported as a `warning` in the tool result.
+   - `update_service` restores `[REDACTED]` env vars from a fresh `getService` before writing, unconditionally (not gated on redact mode). Without this, a `get_service` → edit → `update_service` round-trip writes the literal string into the container.
+
+   Any new write path that accepts caller-supplied env vars must do the same — redaction only holds if every write undoes it.
 
 4. **`SWARMPIT_TOKEN_FILE` to keep the token out of MCP client configs** (`config.ts::loadToken`)
    - If `SWARMPIT_TOKEN_FILE` is set, token is read from the referenced path at startup. Takes precedence over `SWARMPIT_TOKEN`.
@@ -89,6 +92,8 @@ Real Swarmpit behaviour diverges from its own Swagger spec in several places. Ke
 - **Nested `{ spec: { compose } }`** — `getStackFile`, `getStackCompose`, `getServiceCompose` all wrap the compose string under `spec.compose`, but the swagger types it as flat `{ compose: string }`. The client normalises to `{ compose }`. Don't trust the swagger. (I initially filed [swarmpit#729](https://github.com/swarmpit/swarmpit/issues/729) thinking the endpoint was broken — it wasn't, just poorly documented.)
 
 - **Service edit used to reject its own GET response** — [swarmpit#724](https://github.com/swarmpit/swarmpit/issues/724) (now fixed): `POST /api/services/{id}` complained about `imageDigest` being empty (`"nginx:alpine@"`). `prepareServiceForUpdate()` in `helpers.ts` strips nulls, strips read-only fields (`id`, `createdAt`, `updatedAt`, `state`, `status`), and trims `repository` to `{ name, tag }`. Keep this logic — even if the server bug is fixed, the read-only fields and nulls still cause issues.
+
+- **The backend's `clojure.spec` rejects nested nulls its own GET emits** — top-level null-stripping isn't enough. `deployment.maxReplicas: null` (needs a number), `mounts[].volumeOptions: null` on bind mounts (needs a map or absence), and `mounts[].volumeOptions.driver.options: null` on named volumes (needs a collection) all 400. `prepareServiceForUpdate()` normalises all three; every write path must run through it.
 
 - **`POST /api/stacks/{name}` edit wants `name` in the body** — not just the path param. `updateStack()` adds it automatically.
 

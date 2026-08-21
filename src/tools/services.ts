@@ -3,7 +3,13 @@ import { z } from "zod";
 import type { RedactMode } from "../config.js";
 import { SwarmpitClient } from "../client.js";
 import { sanitizeService, sanitizeServices } from "../sanitize.js";
-import { toolResult, toolError, resolveEnvRef, prepareServiceForUpdate } from "./helpers.js";
+import {
+  toolResult,
+  toolError,
+  resolveEnvRef,
+  prepareServiceForUpdate,
+  restoreRedactedVariables,
+} from "./helpers.js";
 
 export function registerServiceTools(
   server: McpServer,
@@ -71,15 +77,20 @@ export function registerServiceTools(
 
   server.tool(
     "update_service",
-    "Update an existing Docker Swarm service",
+    "Update an existing Docker Swarm service. Env vars left as [REDACTED] keep their current live value.",
     {
       id: z.string().describe("Service ID or name"),
-      spec: z.record(z.unknown()).describe("Updated service specification"),
+      spec: z.record(z.unknown()).describe("Updated service specification. Leave [REDACTED] for unchanged env vars."),
     },
     async ({ id, spec }) => {
       try {
-        await client.updateService(id, spec);
-        return toolResult({ updated: true, id });
+        const live = await client.getService(id);
+        const { variables, restored } = restoreRedactedVariables(spec.variables, live.variables);
+        const payload = prepareServiceForUpdate(
+          variables === undefined ? { ...spec } : { ...spec, variables }
+        );
+        await client.updateService(id, payload);
+        return toolResult({ updated: true, id, restoredVars: restored });
       } catch (e) {
         return toolError(e);
       }
