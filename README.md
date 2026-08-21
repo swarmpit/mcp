@@ -480,7 +480,33 @@ Preserved values are read from the **live service state**, not the stored stack 
 }
 ```
 
-Env var **values never appear in a preview** — only names, and for stacks the diff is taken against the sanitized compose. You get a list of which secrets would change (`secretsChanged`) without any of them being printed into the conversation.
+For stacks the diff is **semantic, not line-based** — the two composes are parsed and compared service by service:
+
+```jsonc
+// update_stack({ name, compose, dry_run: true })
+{
+  "dryRun": true,
+  "changes": {
+    "changed": true,
+    "services": {
+      "added": ["cache"],
+      "removed": ["worker"],
+      "changed": {
+        "web": {
+          "image": { "from": "nginx:1.0", "to": "nginx:2.0" },
+          "ports": { "added": ["443:443"] },
+          "environment": { "added": ["NEW_VAR"], "changed": ["DB_PASSWORD"] }
+        }
+      }
+    },
+    "secretsChanged": ["DB_PASSWORD"]
+  }
+}
+```
+
+Compared with a text diff this survives duplicate lines (`restart: always` in three services), key reordering, and the `$$` escaping Swarmpit applies to generated compose — and every change arrives attributed to the service it belongs to.
+
+Env var **values only appear when the redaction mode would have shown them anyway**: never in `all`, only for non-sensitive names in `sensitive`, and freely in `none`. A changed value you can't see is still reported by name, both in `environment.changed` and in the document-wide `secretsChanged` list, so you always know *that* a secret moved without it being printed into the conversation.
 
 ### Large payloads
 

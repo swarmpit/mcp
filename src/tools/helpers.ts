@@ -167,28 +167,6 @@ export function previewServiceChanges(
   return { fields, variables };
 }
 
-/**
- * Line-level diff of two compose documents. Both sides are expected to be
- * sanitized already, so secret values never appear in the output.
- */
-export function previewComposeChanges(
-  before: string,
-  after: string
-): Record<string, unknown> {
-  const beforeLines = before.split("\n");
-  const afterLines = after.split("\n");
-  const beforeSet = new Set(beforeLines);
-  const afterSet = new Set(afterLines);
-
-  const removed = beforeLines.filter((l) => l.trim() && !afterSet.has(l));
-  const added = afterLines.filter((l) => l.trim() && !beforeSet.has(l));
-
-  return {
-    changed: removed.length > 0 || added.length > 0,
-    ...(removed.length ? { removed } : {}),
-    ...(added.length ? { added } : {}),
-  };
-}
 
 /**
  * Resolve a data value that may be a plain string, { $file: path }, or { $env: var }.

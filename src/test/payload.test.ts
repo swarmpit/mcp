@@ -242,8 +242,9 @@ describe("dry_run", () => {
     assert.equal(out.dryRun, true);
     assert.deepEqual(writes, [], "dry_run must not write");
     assert.equal(out.changes.changed, true);
-    assert.ok(out.changes.added.some((l: string) => l.includes("nginx:2.0")));
-    assert.deepEqual(out.secretsChanged, ["DB_PASSWORD"]);
+    assert.deepEqual(out.changes.services.changed.app.image, { from: "nginx:1.0", to: "nginx:2.0" });
+    assert.deepEqual(out.changes.services.changed.app.environment.changed, ["DB_PASSWORD"]);
+    assert.deepEqual(out.changes.secretsChanged, ["DB_PASSWORD"]);
     const raw = JSON.stringify(out);
     assert.equal(raw.includes("new-secret"), false);
     assert.equal(raw.includes("old-secret"), false);

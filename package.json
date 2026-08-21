@@ -14,7 +14,13 @@
     "pretest": "tsc",
     "prepare": "tsc"
   },
-  "keywords": ["mcp", "swarmpit", "docker", "swarm", "claude"],
+  "keywords": [
+    "mcp",
+    "swarmpit",
+    "docker",
+    "swarm",
+    "claude"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/swarmpit/mcp"
@@ -22,6 +28,7 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "yaml": "^2.9.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

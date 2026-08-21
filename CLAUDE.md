@@ -97,9 +97,17 @@ Three layers keep user secrets out of the conversation:
 
    Any new write path that accepts caller-supplied env vars must do the same — redaction only holds if every write undoes it.
 
-4. **`dry_run` previews** (`helpers.ts::previewServiceChanges`, `previewComposeChanges`)
+4. **`dry_run` previews** (`helpers.ts::previewServiceChanges`, `compose-diff.ts::diffCompose`)
    - `update_service` / `update_stack` compute the full payload (restoration, `$env:`, null normalisation) and report the delta without writing.
-   - Previews must never print an env var value: services report var *names* by bucket (added/changed/removed), stacks diff the **sanitized** compose on both sides. If you extend a preview, keep that property — it is the one place where a "safe" read-only operation could hand back everything redaction hid.
+   - Services report var *names* by bucket (added/changed/removed). Stacks use the semantic diff, which emits an env value only when the redact mode would have shown it anyway (`none`, or `sensitive` + non-matching name) and otherwise emits the bare name. If you extend a preview, keep that property — it is the one place where a "safe" read-only operation could hand back everything redaction hid.
+
+## Semantic compose diff
+
+`compose-diff.ts` parses both documents (the `yaml` package — the only runtime dep beyond the MCP SDK and zod) and compares them structurally: services added/removed/changed, per-service field deltas, list membership for arrays, env normalised across the `KEY: value` and `- KEY=value` forms.
+
+It exists because the line-based diff it replaced was a set difference, which silently missed changes when a line appeared in both documents at different multiplicity (`restart: always` in several services), reported `image: a` → `image: b` as unrelated add/remove, and couldn't attribute a line to its service. There is a test that reproduces exactly that miss.
+
+`unescapeCompose` is applied to both sides first: `api/stack-compose` upstream does `(str/replace yaml "$" "$$")`, so a generated compose and a user-authored one differ on every `$` otherwise.
 
 4. **`SWARMPIT_TOKEN_FILE` to keep the token out of MCP client configs** (`config.ts::loadToken`)
    - If `SWARMPIT_TOKEN_FILE` is set, token is read from the referenced path at startup. Takes precedence over `SWARMPIT_TOKEN`.

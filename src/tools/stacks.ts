@@ -10,7 +10,8 @@ import {
   extractComposeEnvVars,
   redactedComposeKeys,
 } from "../sanitize.js";
-import { toolResult, toolError, resolveData, previewComposeChanges } from "./helpers.js";
+import { toolResult, toolError, resolveData } from "./helpers.js";
+import { diffCompose } from "../compose-diff.js";
 
 export function registerStackTools(
   server: McpServer,
@@ -120,19 +121,12 @@ export function registerStackTools(
           : {};
 
         if (dry_run) {
-          // Diff the sanitized forms so the preview can't print a secret the
-          // read path would have redacted.
-          const redactAll = redact !== "sensitive";
+          // diffCompose only ever emits an env value the redaction mode would
+          // have shown anyway; changed secrets come back as names.
           return toolResult({
             dryRun: true,
             name,
-            changes: previewComposeChanges(
-              sanitizeComposeYaml(live.compose, redactAll),
-              sanitizeComposeYaml(resolved, redactAll)
-            ),
-            secretsChanged: [...extractComposeEnvVars(resolved).entries()]
-              .filter(([key, value]) => liveVars.has(key) && liveVars.get(key) !== value)
-              .map(([key]) => key),
+            changes: diffCompose(live.compose, resolved, { redact }),
             ...staleWarning,
           });
         }

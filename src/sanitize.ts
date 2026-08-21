@@ -18,7 +18,7 @@ export function setExtraRedactPatterns(patterns: string[]): void {
   extraPatterns = patterns.map((p) => new RegExp(p, "i"));
 }
 
-function isSensitiveEnvVar(name: string): boolean {
+export function isSensitiveEnvVar(name: string): boolean {
   return DEFAULT_SENSITIVE_PATTERNS.some((p) => p.test(name))
     || extraPatterns.some((p) => p.test(name));
 }
