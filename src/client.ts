@@ -62,7 +62,7 @@ export class SwarmpitClient {
           throw new SwarmpitApiError(
             401,
             response.statusText,
-            "Token expired or invalid — regenerate the API token in Swarmpit"
+            text || "Unauthorized — token invalid, expired, or lacks permission for this operation"
           );
         }
         throw new SwarmpitApiError(response.status, response.statusText, text);
