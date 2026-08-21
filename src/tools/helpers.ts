@@ -123,6 +123,74 @@ export function resolveEnvRef(
 }
 
 /**
+ * Compare the spec about to be written against the live one, without ever
+ * putting an env var value in the result — the point of a preview is to say
+ * what would change, not to leak the values redaction just hid.
+ */
+export function previewServiceChanges(
+  live: Record<string, unknown>,
+  next: Record<string, unknown>
+): Record<string, unknown> {
+  const skip = new Set(["variables", "id", "createdAt", "updatedAt", "state", "status", "version"]);
+  const fields: Record<string, { from: unknown; to: unknown }> = {};
+
+  for (const key of new Set([...Object.keys(live), ...Object.keys(next)])) {
+    if (skip.has(key)) continue;
+    const before = live[key];
+    const after = next[key];
+    if (after === undefined) continue;
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      fields[key] = { from: before ?? null, to: after };
+    }
+  }
+
+  const liveVars = new Map(
+    ((live.variables as { name: string; value: string }[]) ?? []).map((v) => [v.name, v.value])
+  );
+  const nextVars = new Map(
+    ((next.variables as { name: string; value: string }[]) ?? []).map((v) => [v.name, v.value])
+  );
+
+  const added: string[] = [];
+  const changed: string[] = [];
+  for (const [name, value] of nextVars) {
+    if (!liveVars.has(name)) added.push(name);
+    else if (liveVars.get(name) !== value) changed.push(name);
+  }
+  const removed = [...liveVars.keys()].filter((n) => !nextVars.has(n));
+
+  const variables: Record<string, unknown> = { unchanged: nextVars.size - added.length - changed.length };
+  if (added.length) variables.added = added;
+  if (changed.length) variables.changed = changed;
+  if (removed.length) variables.removed = removed;
+
+  return { fields, variables };
+}
+
+/**
+ * Line-level diff of two compose documents. Both sides are expected to be
+ * sanitized already, so secret values never appear in the output.
+ */
+export function previewComposeChanges(
+  before: string,
+  after: string
+): Record<string, unknown> {
+  const beforeLines = before.split("\n");
+  const afterLines = after.split("\n");
+  const beforeSet = new Set(beforeLines);
+  const afterSet = new Set(afterLines);
+
+  const removed = beforeLines.filter((l) => l.trim() && !afterSet.has(l));
+  const added = afterLines.filter((l) => l.trim() && !beforeSet.has(l));
+
+  return {
+    changed: removed.length > 0 || added.length > 0,
+    ...(removed.length ? { removed } : {}),
+    ...(added.length ? { added } : {}),
+  };
+}
+
+/**
  * Resolve a data value that may be a plain string, { $file: path }, or { $env: var }.
  * Used for config/secret data to avoid sending large payloads through the LLM context.
  */

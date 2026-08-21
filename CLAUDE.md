@@ -97,6 +97,10 @@ Three layers keep user secrets out of the conversation:
 
    Any new write path that accepts caller-supplied env vars must do the same — redaction only holds if every write undoes it.
 
+4. **`dry_run` previews** (`helpers.ts::previewServiceChanges`, `previewComposeChanges`)
+   - `update_service` / `update_stack` compute the full payload (restoration, `$env:`, null normalisation) and report the delta without writing.
+   - Previews must never print an env var value: services report var *names* by bucket (added/changed/removed), stacks diff the **sanitized** compose on both sides. If you extend a preview, keep that property — it is the one place where a "safe" read-only operation could hand back everything redaction hid.
+
 4. **`SWARMPIT_TOKEN_FILE` to keep the token out of MCP client configs** (`config.ts::loadToken`)
    - If `SWARMPIT_TOKEN_FILE` is set, token is read from the referenced path at startup. Takes precedence over `SWARMPIT_TOKEN`.
    - Matters because Claude Code and similar clients can accidentally dump `.mcp.json` (with inlined `SWARMPIT_TOKEN`) to conversation via their `Read` tool. Users are directed to add a `permissions.deny` rule on `.mcp.json` and use `SWARMPIT_TOKEN_FILE` — see README "Token handling".
@@ -119,7 +123,9 @@ Real Swarmpit behaviour diverges from its own Swagger spec in several places. Ke
 
 - **`POST /api/stacks/{name}` edit wants `name` in the body** — not just the path param. `updateStack()` adds it automatically.
 
-- **Timeseries endpoints (`/api/nodes/ts`, `/api/services/ts/cpu|memory`, `/api/tasks/{name}/ts`) return huge payloads** — often >100KB. Use the tools sparingly or expect token truncation in clients.
+- **Timeseries endpoints (`/api/nodes/ts`, `/api/services/ts/cpu|memory`, `/api/tasks/{name}/ts`) return huge payloads** — often >100KB, as parallel arrays (`{ time: [...], cpu: [...] }`), sometimes wrapped under a metric key (`{ cpu: { service, time, cpu } }`). `timeseries.ts::reduceTimeseries` walks the payload shape-agnostically and buckets every series it finds; stats are computed from the full series *before* downsampling, so `stats.max` is the true peak. Defaults to 12 points — the tools are safe to call directly now.
+
+- **`clojure.spec` 400s are machine-readable** — `client.ts::formatSpecError` turns the `problems` array into `field must be <type>, got <value>` lines, mapping the common `clojure.core/*` predicates. Extend `SPEC_PREDICATES` when a new one shows up; anything unmapped falls through as the raw predicate name rather than being swallowed.
 
 ## Adding a new tool
 

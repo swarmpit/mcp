@@ -10,7 +10,7 @@ import {
   extractComposeEnvVars,
   redactedComposeKeys,
 } from "../sanitize.js";
-import { toolResult, toolError, resolveData } from "./helpers.js";
+import { toolResult, toolError, resolveData, previewComposeChanges } from "./helpers.js";
 
 export function registerStackTools(
   server: McpServer,
@@ -82,12 +82,16 @@ export function registerStackTools(
 
   server.tool(
     "update_stack",
-    "Update a Docker Swarm stack. [REDACTED] values are preserved. Use $env:VAR_NAME for new secrets, or { $file: /path } to read from a local file.",
+    "Update a Docker Swarm stack. [REDACTED] values are preserved. Use $env:VAR_NAME for new secrets, or { $file: /path } to read from a local file. Use dry_run first to see what would change.",
     {
       name: z.string().describe("Stack name"),
       compose: composeInput.describe("Compose YAML string or { $file: /path }. Leave [REDACTED] for unchanged secrets."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Report what would change without writing anything"),
     },
-    async ({ name, compose }) => {
+    async ({ name, compose, dry_run }) => {
       try {
         const yaml = resolveData(compose);
         // Live service state is the source of truth — the stored stack file goes
@@ -101,7 +105,6 @@ export function registerStackTools(
           file.compose
         );
         const resolved = resolveComposeEnvRefs(restored);
-        await client.updateStack(name, resolved);
 
         const liveVars = extractComposeEnvVars(live.compose);
         const fileVars = extractComposeEnvVars(file.compose);
@@ -109,17 +112,34 @@ export function registerStackTools(
           const l = liveVars.get(key);
           return l !== undefined && fileVars.has(key) && fileVars.get(key) !== l;
         });
+        const staleWarning = stale.length
+          ? {
+              warning:
+                `Stack file was stale for ${stale.join(", ")} — restored the live service value, not the stored stack-file value.`,
+            }
+          : {};
 
-        return toolResult({
-          updated: true,
-          name,
-          ...(stale.length
-            ? {
-                warning:
-                  `Stack file was stale for ${stale.join(", ")} — restored the live service value, not the stored stack-file value.`,
-              }
-            : {}),
-        });
+        if (dry_run) {
+          // Diff the sanitized forms so the preview can't print a secret the
+          // read path would have redacted.
+          const redactAll = redact !== "sensitive";
+          return toolResult({
+            dryRun: true,
+            name,
+            changes: previewComposeChanges(
+              sanitizeComposeYaml(live.compose, redactAll),
+              sanitizeComposeYaml(resolved, redactAll)
+            ),
+            secretsChanged: [...extractComposeEnvVars(resolved).entries()]
+              .filter(([key, value]) => liveVars.has(key) && liveVars.get(key) !== value)
+              .map(([key]) => key),
+            ...staleWarning,
+          });
+        }
+
+        await client.updateStack(name, resolved);
+
+        return toolResult({ updated: true, name, ...staleWarning });
       } catch (e) {
         return toolError(e);
       }

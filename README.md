@@ -464,6 +464,31 @@ Preserved values are read from the **live service state**, not the stored stack 
 
 `update_service` applies the same protection: any env var left as `[REDACTED]` is restored from the live service before the write, so a `get_service` → edit one field → `update_service` round-trip can't overwrite secrets with the placeholder. Restored names are listed in the result as `restoredVars`.
 
+### Previewing a write
+
+`update_service` and `update_stack` take `dry_run: true`, which computes everything — `[REDACTED]` restoration, `$env:` resolution, null normalisation — and reports what *would* change without sending it:
+
+```jsonc
+// update_service({ id, spec, dry_run: true })
+{
+  "dryRun": true,
+  "restoredVars": ["RPC_URL"],
+  "changes": {
+    "fields": { "replicas": { "from": 1, "to": 3 } },
+    "variables": { "changed": ["LOG_LEVEL"], "added": ["NEW"], "removed": ["OLD"], "unchanged": 4 }
+  }
+}
+```
+
+Env var **values never appear in a preview** — only names, and for stacks the diff is taken against the sanitized compose. You get a list of which secrets would change (`secretsChanged`) without any of them being printed into the conversation.
+
+### Large payloads
+
+Two tool families return far more than fits comfortably in context, so both reduce server-side:
+
+- **Timeseries** (`get_nodes_timeseries`, `get_services_*_timeseries`, `get_task_timeseries`) accept `points` (bucket count, default 12), `agg` (`avg`/`max`/`min`), `match` (filter series by name) and `stats_only`. Summary statistics are computed from the *full* series before downsampling, so `stats.max` is the real peak, not the peak of an average. A 30-service / 720-sample payload comes back over 10× smaller by default.
+- **`service_logs`** accepts `grep` (substring, or `/regex/flags`) and `tail`, applied before the result is returned. The reply reports `total`, `returned` and what was `dropped`, so a filtered view never looks like the whole log.
+
 ## Development
 
 ```bash
