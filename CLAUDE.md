@@ -70,6 +70,12 @@ Config validation runs at startup; fatal errors exit with a message. Immediately
 - **`redact` is captured by value at registration**, which is why it's process-wide. Per-server redact modes need the same lazy treatment as the client.
 - Adding a tool needs nothing extra — register it on the scoped server like the others and it gets selection for free.
 
+### Fan-out
+
+Read tools additionally accept `server: "*"` or `server: ["a","b"]` and return `{ queried, failed?, results: { <name>: … } }`, running the handler once per target in parallel, each in its own `AsyncLocalStorage` scope. Per-server failures land under that server's key instead of failing the call.
+
+`supportsFanOut()` gates this: a tool qualifies only if it starts with `list_`/`get_` (or is `service_logs`) **and** doesn't start with a mutating prefix. Writes always take a single enum. If you add a tool that mutates state under a `get_`-ish name, add its prefix to `MUTATING_PREFIXES` — the classifier is the only thing standing between a fan-out argument and a write against every cluster at once.
+
 ## Security model — secrets never in LLM context
 
 Three layers keep user secrets out of the conversation:
