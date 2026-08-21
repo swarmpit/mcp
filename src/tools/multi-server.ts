@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
 import type { SwarmpitServerConfig } from "../config.js";
 import { SwarmpitClient } from "../client.js";
-import { toolError } from "./helpers.js";
+import { toolResult, toolError } from "./helpers.js";
 
 type ToolRegistrar = (
   name: string,
@@ -44,6 +44,42 @@ export interface MultiServer {
   clients: Map<string, SwarmpitClient>;
 }
 
+const MUTATING_PREFIXES = [
+  "create_",
+  "update_",
+  "edit_",
+  "delete_",
+  "scale_",
+  "stop_",
+  "redeploy_",
+  "rollback_",
+  "deactivate_",
+  "pin_",
+  "unpin_",
+];
+
+/**
+ * Fan-out is offered only for reads. A write must always name exactly one
+ * target — "apply this to every cluster I have" is not a thing a tool call
+ * should be able to express by accident.
+ */
+export function supportsFanOut(toolName: string): boolean {
+  if (MUTATING_PREFIXES.some((p) => toolName.startsWith(p))) return false;
+  return toolName.startsWith("list_") || toolName.startsWith("get_") || toolName === "service_logs";
+}
+
+/** Unwrap a CallToolResult into something worth nesting under a server name. */
+function unwrap(result: any): { ok: boolean; value: unknown } {
+  const text = result?.content?.[0]?.text;
+  if (typeof text !== "string") return { ok: !result?.isError, value: result };
+  if (result?.isError) return { ok: false, value: text };
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: true, value: text };
+  }
+}
+
 export function createMultiServer(
   realServer: { tool: ToolRegistrar },
   servers: SwarmpitServerConfig[],
@@ -53,50 +89,102 @@ export function createMultiServer(
   const names = servers.map((s) => s.name);
   const single = servers.length === 1;
 
+  const nameEnum = () => z.enum(names as [string, ...string[]]);
+  const targetHint = defaultServer
+    ? `Defaults to ${defaultServer}.`
+    : `Required — no default is configured.`;
+
   // A single server keeps the exact schemas it has today — no extra parameter,
   // no extra tokens, existing configs behave identically.
-  const serverParam = single
-    ? undefined
-    : {
-        server: z
-          .enum(names as [string, ...string[]])
-          .optional()
-          .describe(
-            defaultServer
-              ? `Target Swarmpit instance: ${names.join(", ")}. Defaults to ${defaultServer}.`
-              : `Target Swarmpit instance: ${names.join(", ")}. Required — no default is configured.`
-          ),
-      };
+  const serverParam = (fanOut: boolean) => {
+    if (single) return undefined;
+    return {
+      server: (fanOut
+        ? z.union([nameEnum(), z.literal("*"), z.array(nameEnum())])
+        : nameEnum()
+      )
+        .optional()
+        .describe(
+          fanOut
+            ? `Target Swarmpit instance: ${names.join(", ")}. Pass "*" or a list of names to query several at once and get results grouped by server. ${targetHint}`
+            : `Target Swarmpit instance: ${names.join(", ")}. ${targetHint}`
+        ),
+    };
+  };
 
-  const resolve = (requested?: string): SwarmpitClient => {
+  const resolveName = (requested?: string): string => {
     const name = requested ?? defaultServer;
     if (!name) {
       throw new Error(
         `No server specified and no default configured. Pass server: one of ${names.join(", ")}`
       );
     }
-    const client = clients.get(name);
-    if (!client) {
+    if (!clients.has(name)) {
       throw new Error(`Unknown server "${name}". Configured servers: ${names.join(", ")}`);
     }
-    return client;
+    return name;
+  };
+
+  const resolveTargets = (requested: unknown): string[] => {
+    if (requested === "*") return [...names];
+    if (Array.isArray(requested)) {
+      if (requested.length === 0) throw new Error("server: [] selects nothing — omit it or pass names");
+      return [...new Set(requested.map((n) => resolveName(String(n))))];
+    }
+    return [resolveName(requested as string | undefined)];
   };
 
   const server: { tool: ToolRegistrar } = {
     tool(name, description, schema, handler) {
+      const fanOut = !single && supportsFanOut(name);
+      const extra = serverParam(fanOut);
       return realServer.tool(
         name,
         description,
-        serverParam ? { ...schema, ...serverParam } : schema,
+        extra ? { ...schema, ...extra } : schema,
         async (args: any, ...rest: any[]) => {
           const { server: requested, ...toolArgs } = args ?? {};
-          let client: SwarmpitClient;
+
+          let targets: string[];
           try {
-            client = resolve(requested);
+            targets = resolveTargets(requested);
           } catch (e) {
             return toolError(e);
           }
-          return activeClient.run(client, () => handler(toolArgs, ...rest));
+
+          // Shape follows the request form, not the resolved count: asking for
+          // "*" or a list always gets grouped results, even if it names one
+          // server, so the caller can parse the reply without guessing.
+          const grouped = requested === "*" || Array.isArray(requested);
+          if (!grouped) {
+            return activeClient.run(clients.get(targets[0])!, () => handler(toolArgs, ...rest));
+          }
+
+          // One cluster being down or lacking the resource must not fail the
+          // whole query — report per server and let the caller judge.
+          const settled = await Promise.all(
+            targets.map(async (target) => {
+              try {
+                const result = await activeClient.run(clients.get(target)!, () =>
+                  handler(toolArgs, ...rest)
+                );
+                return { target, ...unwrap(result) };
+              } catch (e) {
+                return { target, ok: false, value: e instanceof Error ? e.message : String(e) };
+              }
+            })
+          );
+
+          const results = Object.fromEntries(
+            settled.map((s) => [s.target, s.ok ? s.value : { error: s.value }])
+          );
+          const failed = settled.filter((s) => !s.ok).map((s) => s.target);
+
+          return toolResult({
+            queried: targets,
+            ...(failed.length ? { failed } : {}),
+            results,
+          });
         }
       );
     },

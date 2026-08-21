@@ -4,7 +4,7 @@ import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../config.js";
-import { createMultiServer } from "../tools/multi-server.js";
+import { createMultiServer, supportsFanOut } from "../tools/multi-server.js";
 import { registerServiceTools } from "../tools/services.js";
 import { registerUtilTools } from "../tools/util.js";
 
@@ -101,17 +101,117 @@ describe("multi-server dispatch", () => {
   });
 });
 
+describe("multi-server fan-out", () => {
+  /** A read tool whose result differs per server, plus one server that fails. */
+  function fanSetup(opts: { failOn?: string } = {}) {
+    const real = mockServer();
+    const multi = createMultiServer(real as never, SERVERS, "prod");
+    for (const [name, client] of multi.clients) {
+      (client as unknown as Record<string, Function>).listServices = () =>
+        name === opts.failOn
+          ? Promise.reject(new Error(`${name} is unreachable`))
+          : Promise.resolve([{ serviceName: `${name}-web` }]);
+    }
+    multi.server.tool("list_services", "list", {}, async () => {
+      const services = await (multi.client as unknown as Record<string, Function>).listServices();
+      return { content: [{ type: "text", text: JSON.stringify(services) }] };
+    });
+    return real;
+  }
+
+  it("queries every server for '*' and groups by name", async () => {
+    const real = fanSetup();
+    const out: any = await real.handlers.list_services({ server: "*" });
+    const body = JSON.parse(out.content[0].text);
+
+    assert.deepEqual(body.queried, ["prod", "play"]);
+    assert.deepEqual(body.results, {
+      prod: [{ serviceName: "prod-web" }],
+      play: [{ serviceName: "play-web" }],
+    });
+    assert.equal(body.failed, undefined);
+  });
+
+  it("accepts an explicit list and dedupes it", async () => {
+    const real = fanSetup();
+    const out: any = await real.handlers.list_services({ server: ["play", "play"] });
+    const body = JSON.parse(out.content[0].text);
+    assert.deepEqual(body.queried, ["play"]);
+  });
+
+  it("returns the bare result when one server is selected", async () => {
+    const real = fanSetup();
+    const out: any = await real.handlers.list_services({ server: "prod" });
+    assert.deepEqual(JSON.parse(out.content[0].text), [{ serviceName: "prod-web" }]);
+  });
+
+  it("reports a failing server without losing the healthy ones", async () => {
+    const real = fanSetup({ failOn: "play" });
+    const out: any = await real.handlers.list_services({ server: "*" });
+    const body = JSON.parse(out.content[0].text);
+
+    assert.deepEqual(body.results.prod, [{ serviceName: "prod-web" }]);
+    assert.match(body.results.play.error, /play is unreachable/);
+    assert.deepEqual(body.failed, ["play"]);
+    assert.equal(out.isError, undefined);
+  });
+
+  it("rejects an unknown name inside a list", async () => {
+    const real = fanSetup();
+    const out: any = await real.handlers.list_services({ server: ["prod", "ghost"] });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /Unknown server "ghost"/);
+  });
+
+  it("rejects an empty list rather than querying nothing", async () => {
+    const real = fanSetup();
+    const out: any = await real.handlers.list_services({ server: [] });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /selects nothing/);
+  });
+});
+
 describe("multi-server tool schemas", () => {
-  it("adds a server enum to every tool when several are configured", () => {
+  it("adds a server param to every tool when several are configured", () => {
     const real = mockServer();
     const multi = createMultiServer(real as never, SERVERS, "prod");
     registerServiceTools(multi.server as never, multi.client, "all");
 
     const schema = real.schemas.get_service as Record<string, any>;
     assert.ok(schema.server, "expected a server param");
-    assert.deepEqual(schema.server._def.innerType._def.values, ["prod", "play"]);
     assert.match(schema.server.description, /Defaults to prod/);
     assert.ok(schema.id, "existing params are preserved");
+  });
+
+  it("offers fan-out on reads and a plain enum on writes", () => {
+    const real = mockServer();
+    const multi = createMultiServer(real as never, SERVERS, "prod");
+    registerServiceTools(multi.server as never, multi.client, "all");
+
+    const read = (real.schemas.list_services.server as any)._def.innerType;
+    assert.equal(read._def.typeName, "ZodUnion", "reads accept a name, '*', or a list");
+    assert.match((real.schemas.list_services.server as any).description, /"\*"/);
+
+    for (const write of ["update_service", "delete_service", "scale_service", "redeploy_service"]) {
+      const param = (real.schemas[write].server as any)._def.innerType;
+      assert.equal(param._def.typeName, "ZodEnum", `${write} must target exactly one server`);
+      assert.deepEqual(param._def.values, ["prod", "play"]);
+    }
+  });
+
+  it("classifies every registered tool correctly", () => {
+    const real = mockServer();
+    const multi = createMultiServer(real as never, SERVERS, "prod");
+    registerServiceTools(multi.server as never, multi.client, "all");
+
+    assert.equal(supportsFanOut("list_services"), true);
+    assert.equal(supportsFanOut("get_service_env"), true);
+    assert.equal(supportsFanOut("service_logs"), true);
+    assert.equal(supportsFanOut("update_service_env"), false);
+    assert.equal(supportsFanOut("delete_stack_file"), false);
+    assert.equal(supportsFanOut("create_user"), false);
+    assert.equal(supportsFanOut("pin_node_to_dashboard"), false);
+    assert.equal(supportsFanOut("rollback_stack"), false);
   });
 
   it("adds nothing at all for a single server", () => {

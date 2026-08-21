@@ -94,6 +94,27 @@ Or without a file, using per-name env vars (`SWARMPIT_<NAME>_URL`, with `-` beco
 
 Then: `list_services({ server: "prod-us" })`. Omitting `server` uses the default. If several instances are configured and no default is set, the argument is required — a forgotten argument will never silently pick a cluster for you. `swarmpit_info` lists what's configured.
 
+#### Querying several instances at once
+
+Read-only tools also accept `"*"` or a list of names, and return results grouped by server:
+
+```jsonc
+// list_services({ server: "*" })
+{
+  "queried": ["prod-eu", "prod-us"],
+  "results": {
+    "prod-eu": [ { "serviceName": "api", ... } ],
+    "prod-us": [ { "serviceName": "api", ... } ]
+  }
+}
+```
+
+Useful for "which cluster runs this service?", comparing an image tag across regions, or checking whether a config exists everywhere — one tool call instead of one per cluster.
+
+- **Reads only.** `list_*`, `get_*` and `service_logs` accept fan-out. Every mutating tool (`create_*`, `update_*`, `delete_*`, `scale_*`, `redeploy_*`, `rollback_*`, `stop_*`, `deactivate_*`, `pin_*`/`unpin_*`, `edit_*`) takes a single name only — "apply this to every cluster" should not be expressible by accident.
+- **Partial failure is reported, not fatal.** An unreachable cluster, or one where the named resource doesn't exist, comes back as `{ "error": "..." }` under its own key and is listed in `failed`. The other clusters' results still arrive.
+- Passing `"*"` or a list always returns the grouped shape, even if it resolves to one server; passing a bare name returns the plain result.
+
 #### Which pattern to use
 
 **Consolidate within a trust tier, isolate across tiers.**
