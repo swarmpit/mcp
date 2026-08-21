@@ -508,6 +508,20 @@ Compared with a text diff this survives duplicate lines (`restart: always` in th
 
 Env var **values only appear when the redaction mode would have shown them anyway**: never in `all`, only for non-sensitive names in `sensitive`, and freely in `none`. A changed value you can't see is still reported by name, both in `environment.changed` and in the document-wide `secretsChanged` list, so you always know *that* a secret moved without it being printed into the conversation.
 
+### Compose history
+
+If your Swarmpit serves `/api/stacks/{name}/history`, `get_stack_history` lists past revisions of a stack — newest first, **metadata only** by default, since an uncapped history of full composes is exactly the payload problem to avoid:
+
+```jsonc
+{ "entries": [
+  { "index": 0, "at": "...", "by": "claude", "comment": "bump nginx for CVE-2026-1234", "trigger": {"kind": "stack-update"} },
+  { "index": 1, "at": "...", "by": "admin",  "comment": "initial rollout", "trigger": {"kind": "stack-create"} } ] }
+```
+
+Pass `index` for one revision's compose (sanitized like every other compose path), or `index` + `diff: true` to get the semantic diff between that revision and the live stack.
+
+Every stack write — `create_stack`, `update_stack`, `redeploy_stack`, `rollback_stack` — takes an optional `comment`: a one-line title for the change, written like a commit subject. It is recorded in the history and shown in Swarmpit's UI, which has no field for it, so an agent making the change is the one best placed to explain it. Older Swarmpit versions ignore the parameter.
+
 ### Large payloads
 
 Two tool families return far more than fits comfortably in context, so both reduce server-side:

@@ -64,6 +64,19 @@ export function formatSpecError(body: string): string | undefined {
   return `Swarmpit rejected the request body:\n${lines.join("\n")}`;
 }
 
+export interface StackHistoryEntry {
+  at: string;
+  by: string;
+  comment?: string;
+  trigger?: { kind?: string; service?: string; digest?: string };
+  spec?: { compose?: string };
+}
+
+/** Older Swarmpit builds ignore the unknown query param rather than failing. */
+function commentQuery(comment?: string): string {
+  return comment ? `?comment=${encodeURIComponent(comment)}` : "";
+}
+
 export class SwarmpitClient {
   private baseUrl: string;
   private token: string;
@@ -203,23 +216,39 @@ export class SwarmpitClient {
     return { compose };
   }
 
-  async createStack(spec: { name: string; spec: { compose: string } }): Promise<void> {
-    await this.request<void>("POST", "/api/stacks", spec);
+  async createStack(
+    spec: { name: string; spec: { compose: string } },
+    comment?: string
+  ): Promise<void> {
+    await this.request<void>("POST", `/api/stacks${commentQuery(comment)}`, spec);
   }
 
-  async updateStack(name: string, compose: string): Promise<void> {
-    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}`, {
-      name,
-      spec: { compose },
-    });
+  async updateStack(name: string, compose: string, comment?: string): Promise<void> {
+    await this.request<void>(
+      "POST",
+      `/api/stacks/${encodeURIComponent(name)}${commentQuery(comment)}`,
+      { name, spec: { compose } }
+    );
   }
 
-  async redeployStack(name: string): Promise<void> {
-    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/redeploy`);
+  async redeployStack(name: string, comment?: string): Promise<void> {
+    await this.request<void>(
+      "POST",
+      `/api/stacks/${encodeURIComponent(name)}/redeploy${commentQuery(comment)}`
+    );
   }
 
-  async rollbackStack(name: string): Promise<void> {
-    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/rollback`);
+  async rollbackStack(name: string, comment?: string): Promise<void> {
+    await this.request<void>(
+      "POST",
+      `/api/stacks/${encodeURIComponent(name)}/rollback${commentQuery(comment)}`
+    );
+  }
+
+  async getStackHistory(name: string): Promise<StackHistoryEntry[]> {
+    return this.request<StackHistoryEntry[]>(
+      "GET", `/api/stacks/${encodeURIComponent(name)}/history`
+    );
   }
 
   async deactivateStack(name: string): Promise<void> {
