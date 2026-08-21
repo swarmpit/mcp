@@ -12,7 +12,8 @@ src/
   sanitize.ts        — redaction utilities for services, compose YAML; $env: resolver; [REDACTED] round-trip
   types.ts           — TypeScript types for Swarmpit API responses
   tools/
-    register.ts      — wires all tool registrations, creates single SwarmpitClient instance
+    register.ts      — wires all tool registrations through the multi-server scope
+    multi-server.ts  — per-call server selection: AsyncLocalStorage + client Proxy
     helpers.ts       — toolResult/toolError, resolveEnvRef, resolveData ($env/$file), prepareServiceForUpdate
     services.ts      — list/get/create/update/redeploy/rollback/stop/scale/delete + env management
     stacks.ts        — list/get/create/update/redeploy/rollback/deactivate/delete + stack-file variants
@@ -43,16 +44,31 @@ Tests use Node's built-in test runner. Pattern for integration tests (see `test/
 
 ## Configuration
 
-Three env vars drive the server, loaded by `config.ts`:
+`config.ts` resolves one or more target instances, in this precedence order:
+
+1. `SWARMPIT_CONFIG_FILE` — JSON `{ default?, servers: { name: { url, token | tokenFile } } }`
+2. `SWARMPIT_SERVERS=a,b` — plus `SWARMPIT_<NAME>_URL` / `_TOKEN` / `_TOKEN_FILE` (name upper-cased, non-alnum → `_`)
+3. `SWARMPIT_URL` + `SWARMPIT_TOKEN`/`SWARMPIT_TOKEN_FILE` — the legacy single-instance form, loaded as one server named `default`
 
 | Env | Required | Notes |
 |-----|----------|-------|
-| `SWARMPIT_URL` | Yes | Base URL, trailing slashes stripped |
-| `SWARMPIT_TOKEN` | Yes | Accepts with or without `Bearer ` prefix |
-| `SWARMPIT_REDACT` | No | `all` (default), `sensitive`, `none` |
+| one of the three forms above | Yes | URLs have trailing slashes stripped; `~/` expands in file paths |
+| `SWARMPIT_DEFAULT_SERVER` | No | Only meaningful with several servers |
+| `SWARMPIT_REDACT` | No | `all` (default), `sensitive`, `none`. Process-wide — **not** per server (see below) |
 | `SWARMPIT_REDACT_PATTERNS` | No | Comma-separated extra regex patterns for sensitive mode |
 
-Config validation runs at startup; fatal errors exit with a message. Immediately after, `checkConnection()` calls `listNodes()` to verify auth and warn (not fail) if the token is wrong.
+`SwarmpitConfig.url`/`.token` are kept as conveniences pointing at the default server, so single-instance callers read unchanged. They are `undefined` when several servers are configured with no default.
+
+Config validation runs at startup; fatal errors exit with a message. Immediately after, `checkConnection()` calls `listNodes()` **per server**, in parallel, and warns (not fails) — one unreachable instance must not take the process down.
+
+## Multi-server dispatch
+
+`tools/multi-server.ts` keeps every resource registrar single-server. It wraps `server.tool()` so each schema gains `server: z.enum([...names]).optional()`, then per call resolves the target and stashes its `SwarmpitClient` in an `AsyncLocalStorage`; registrars get a `Proxy` that forwards each method to whatever client is active. Consequences worth knowing:
+
+- **Single-server setups get no `server` param at all** — schemas are byte-identical to before, so no token cost and no behaviour change.
+- **With several servers and no configured default, `server` is required.** Deliberate: a forgotten argument must never silently pick a cluster.
+- **`redact` is captured by value at registration**, which is why it's process-wide. Per-server redact modes need the same lazy treatment as the client.
+- Adding a tool needs nothing extra — register it on the scoped server like the others and it gets selection for free.
 
 ## Security model — secrets never in LLM context
 

@@ -8,12 +8,14 @@ export function registerUtilTools(
 ): void {
   server.tool(
     "swarmpit_info",
-    "Show the connected Swarmpit instance URL and redaction mode",
+    "Show the configured Swarmpit instances and redaction mode",
     {},
     async () => {
       return toolResult({
-        url: config.url,
+        servers: config.servers.map((s) => ({ name: s.name, url: s.url })),
+        defaultServer: config.defaultServer,
         redact: config.redact,
+        ...(config.url ? { url: config.url } : {}),
       });
     }
   );
