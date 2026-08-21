@@ -19,6 +19,51 @@ export class SwarmpitApiError extends Error {
   }
 }
 
+const SPEC_PREDICATES: Record<string, string> = {
+  "clojure.core/number?": "a number",
+  "clojure.core/int?": "an integer",
+  "clojure.core/string?": "a string",
+  "clojure.core/map?": "an object",
+  "clojure.core/coll?": "a collection",
+  "clojure.core/vector?": "an array",
+  "clojure.core/boolean?": "a boolean",
+  "clojure.core/keyword?": "a keyword",
+  "clojure.core/set?": "a set",
+};
+
+interface SpecProblem {
+  path?: unknown[];
+  pred?: string;
+  val?: unknown;
+}
+
+/**
+ * Turn a reitit/clojure.spec coercion failure into something actionable.
+ * The raw body is a nested blob of `problems`; what the caller needs is
+ * "this field, this expected type, this is what you sent".
+ */
+export function formatSpecError(body: string): string | undefined {
+  let parsed: { problems?: SpecProblem[]; type?: string };
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed?.problems) || parsed.problems.length === 0) return undefined;
+
+  const lines = parsed.problems.slice(0, 10).map((p) => {
+    const field = Array.isArray(p.path) && p.path.length ? p.path.join(".") : "(request body)";
+    const expected = (p.pred && SPEC_PREDICATES[p.pred]) ?? p.pred ?? "a valid value";
+    const got = p.val === undefined ? "nothing" : JSON.stringify(p.val);
+    return `  ${field} must be ${expected}, got ${got}`;
+  });
+  if (parsed.problems.length > lines.length) {
+    lines.push(`  …and ${parsed.problems.length - lines.length} more`);
+  }
+
+  return `Swarmpit rejected the request body:\n${lines.join("\n")}`;
+}
+
 export class SwarmpitClient {
   private baseUrl: string;
   private token: string;
@@ -65,7 +110,11 @@ export class SwarmpitClient {
             text || "Unauthorized — token invalid, expired, or lacks permission for this operation"
           );
         }
-        throw new SwarmpitApiError(response.status, response.statusText, text);
+        throw new SwarmpitApiError(
+          response.status,
+          response.statusText,
+          formatSpecError(text) ?? text
+        );
       }
 
       const text = await response.text();

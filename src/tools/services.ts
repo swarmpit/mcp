@@ -3,12 +3,14 @@ import { z } from "zod";
 import type { RedactMode } from "../config.js";
 import { SwarmpitClient } from "../client.js";
 import { sanitizeService, sanitizeServices } from "../sanitize.js";
+import { filterLogs } from "../timeseries.js";
 import {
   toolResult,
   toolError,
   resolveEnvRef,
   prepareServiceForUpdate,
   restoreRedactedVariables,
+  previewServiceChanges,
 } from "./helpers.js";
 
 export function registerServiceTools(
@@ -46,15 +48,29 @@ export function registerServiceTools(
 
   server.tool(
     "service_logs",
-    "Get logs for a Docker Swarm service",
+    "Get logs for a Docker Swarm service. Filter with grep/tail rather than pulling everything — a busy service returns thousands of lines.",
     {
       id: z.string().describe("Service ID or name"),
       since: z.string().optional().describe("Time window as Go duration (e.g. '30s', '5m', '1h', '24h'). Default: 5m"),
+      grep: z
+        .string()
+        .optional()
+        .describe(
+          "Keep only lines containing this substring (case-insensitive), or /regex/flags (case-sensitive unless you pass i)"
+        ),
+      tail: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Keep only the last N lines after filtering"),
     },
-    async ({ id, since }) => {
+    async ({ id, since, grep, tail }) => {
       try {
         const logs = await client.getServiceLogs(id, since);
-        return toolResult(logs);
+        if (grep === undefined && tail === undefined) return toolResult(logs);
+        const { entries, ...counts } = filterLogs(logs, { grep, tail });
+        return toolResult({ ...counts, entries });
       } catch (e) {
         return toolError(e);
       }
@@ -77,18 +93,30 @@ export function registerServiceTools(
 
   server.tool(
     "update_service",
-    "Update an existing Docker Swarm service. Env vars left as [REDACTED] keep their current live value.",
+    "Update an existing Docker Swarm service. Env vars left as [REDACTED] keep their current live value. Use dry_run first to see what would change.",
     {
       id: z.string().describe("Service ID or name"),
       spec: z.record(z.unknown()).describe("Updated service specification. Leave [REDACTED] for unchanged env vars."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Report what would change without writing anything"),
     },
-    async ({ id, spec }) => {
+    async ({ id, spec, dry_run }) => {
       try {
         const live = await client.getService(id);
         const { variables, restored } = restoreRedactedVariables(spec.variables, live.variables);
         const payload = prepareServiceForUpdate(
           variables === undefined ? { ...spec } : { ...spec, variables }
         );
+        if (dry_run) {
+          return toolResult({
+            dryRun: true,
+            id,
+            restoredVars: restored,
+            changes: previewServiceChanges(live as unknown as Record<string, unknown>, payload),
+          });
+        }
         await client.updateService(id, payload);
         return toolResult({ updated: true, id, restoredVars: restored });
       } catch (e) {
