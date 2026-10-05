@@ -99,8 +99,13 @@ export class SwarmpitClient {
       Accept: "application/json",
     };
 
-    if (body !== undefined) {
+    const payload = body !== undefined ? JSON.stringify(body) : undefined;
+    if (payload !== undefined) {
       headers["Content-Type"] = "application/json";
+      // last line of defence: a redaction placeholder must never reach a live spec
+      if (method !== "GET" && payload.includes("[REDACTED]")) {
+        throw new Error(`Refusing to send a [REDACTED] placeholder in ${method} ${path}; restore or replace the value first.`);
+      }
     }
 
     const controller = new AbortController();
@@ -110,7 +115,7 @@ export class SwarmpitClient {
       const response = await fetch(url, {
         method,
         headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: payload,
         signal: controller.signal,
       });
 

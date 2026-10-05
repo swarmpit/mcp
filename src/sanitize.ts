@@ -1,3 +1,4 @@
+import { isMap, isScalar, isSeq, parse, parseDocument } from "yaml";
 import type { SwarmpitService, SwarmpitEnvVar } from "./types.js";
 
 const DEFAULT_SENSITIVE_PATTERNS: RegExp[] = [
@@ -88,11 +89,22 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
   );
 
   // List form:  - SOME_KEY=some_value
-  return sanitized.replace(
+  const listed = sanitized.replace(
     /^(\s+-\s+)([A-Z_][A-Z0-9_]*)=(.+)$/gm,
-    (match, prefix: string, key: string, value: string) => {
+    (match, prefix: string, key: string) => {
       if (redactAll || isSensitiveEnvVar(key)) {
         return `${prefix}${key}=[REDACTED]`;
+      }
+      return match;
+    }
+  );
+
+  // Quoted list form:  - "SOME_KEY=some_value"  (previously passed through unredacted)
+  return listed.replace(
+    /^(\s+-\s+)(["'])([A-Z_][A-Z0-9_]*)=(.*)\2\s*$/gm,
+    (match, prefix: string, quote: string, key: string) => {
+      if (redactAll || isSensitiveEnvVar(key)) {
+        return `${prefix}${quote}${key}=[REDACTED]${quote}`;
       }
       return match;
     }
@@ -147,81 +159,140 @@ export function resolveComposeEnvRefs(yaml: string): string {
   );
 }
 
-/**
- * Build env var lookup from raw compose YAML. Extracts KEY=value pairs
- * so [REDACTED] values can be restored from the original.
- */
-export function extractComposeEnvVars(yaml: string): Map<string, string> {
-  const vars = new Map<string, string>();
-  if (!yaml) return vars;
+const PLACEHOLDER = "[REDACTED]";
+const LIST_PLACEHOLDER = /^([A-Za-z_][A-Za-z0-9_.-]*)=\[REDACTED\]$/;
 
-  // Key-value form:  KEY: value
-  for (const match of yaml.matchAll(
-    /^\s+([A-Z_][A-Z0-9_]*):\s*(.+)$/gm
-  )) {
-    vars.set(match[1], match[2]);
-  }
+type Path = (string | number)[];
 
-  // List form:  - KEY=value
-  for (const match of yaml.matchAll(
-    /^\s+-\s+([A-Z_][A-Z0-9_]*)=(.+)$/gm
-  )) {
-    vars.set(match[1], match[2]);
-  }
-
-  return vars;
+export interface ComposeRestore {
+  yaml: string;
+  /** dotted paths restored, with the index of the source that supplied each */
+  restored: { path: string; source: number }[];
+  /** paths where a later source disagreed with the one used */
+  stale: string[];
+  /** placeholders no source could fill; the caller must not write these */
+  unresolved: string[];
 }
 
-/** Env var names left as [REDACTED] in an edited compose. */
-export function redactedComposeKeys(yaml: string): string[] {
-  const keys = new Set<string>();
-  if (!yaml) return [];
-  for (const m of yaml.matchAll(/^\s+([A-Z_][A-Z0-9_]*):\s*\[REDACTED\]$/gm)) keys.add(m[1]);
-  for (const m of yaml.matchAll(/^\s+-\s+([A-Z_][A-Z0-9_]*)=\[REDACTED\]$/gm)) keys.add(m[1]);
-  return [...keys];
+// `KEY: [REDACTED]` parses as a one-item flow sequence, quoted forms as a string
+function isPlaceholderNode(node: unknown): boolean {
+  if (isScalar(node)) return node.value === PLACEHOLDER;
+  if (isSeq(node) && node.flow && node.items.length === 1) {
+    const item = node.items[0];
+    return isScalar(item) && item.value === "REDACTED";
+  }
+  return false;
+}
+
+function getIn(obj: unknown, path: Path): unknown {
+  let cur = obj;
+  for (const k of path) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string | number, unknown>)[k];
+  }
+  return cur;
+}
+
+/** Compose env is either `KEY: value` or `- KEY=value`; look a key up in either. */
+function envValue(env: unknown, key: string): unknown {
+  if (Array.isArray(env)) {
+    for (const e of env) if (typeof e === "string" && e.startsWith(`${key}=`)) return e.slice(key.length + 1);
+    return undefined;
+  }
+  if (env && typeof env === "object") return (env as Record<string, unknown>)[key];
+  return undefined;
+}
+
+function usable(v: unknown): v is string | number | boolean {
+  return (typeof v === "string" || typeof v === "number" || typeof v === "boolean") && !String(v).includes(PLACEHOLDER);
+}
+
+function lookup(src: unknown, path: Path, key: string, listForm: boolean): unknown {
+  // service env: match by name within the same service, whichever form either side uses
+  if (path[0] === "services" && path[2] === "environment" && path.length === 4) {
+    return envValue(getIn(src, ["services", path[1], "environment"]), key);
+  }
+  if (!listForm) return getIn(src, path);
+  return envValue(getIn(src, path.slice(0, -1)), key);
+}
+
+function parseSource(yaml: string): unknown {
+  if (!yaml) return undefined;
+  try {
+    return parse(yaml, { merge: true });
+  } catch {
+    return undefined;
+  }
 }
 
 /**
- * Restore [REDACTED] values in an edited compose YAML from the original
- * raw compose. This allows safe round-tripping:
+ * Restore [REDACTED] placeholders in an edited compose from the original
+ * composes, structurally rather than by line:
  *
- * 1. swarmpit_get_stack returns compose with sensitive values as [REDACTED]
- * 2. Claude edits only what it needs, leaves [REDACTED] in place
- * 3. This function restores original values where [REDACTED] remains
- * 4. $env:VAR references are resolved from process.env
- * 5. Plaintext values pass through as-is
+ * 1. get_stack returns compose with sensitive values as [REDACTED]
+ * 2. the model edits what it needs and leaves [REDACTED] in place, quoted or not
+ * 3. each placeholder is filled from the same service + key (or the same path
+ *    outside services) in the first source that has a real value
+ *
+ * Anything no source can fill is reported in `unresolved`; writing it would
+ * ship the literal placeholder, so callers must refuse.
  */
-export function restoreRedactedValues(
-  editedYaml: string,
-  originalYaml: string
-): string {
-  if (!editedYaml) return editedYaml;
+export function restoreComposeRedactions(edited: string, sources: string[]): ComposeRestore {
+  const result: ComposeRestore = { yaml: edited, restored: [], stale: [], unresolved: [] };
+  if (!edited || !edited.includes("REDACTED")) return result;
 
-  const origVars = extractComposeEnvVars(originalYaml);
+  const doc = parseDocument(edited, { merge: true });
+  if (doc.errors.length) throw new Error(`compose is not valid YAML: ${doc.errors[0].message}`);
+  const parsed = sources.map(parseSource);
 
-  // Key-value form: restore KEY: [REDACTED]
-  let restored = editedYaml.replace(
-    /^(\s+)([A-Z_][A-Z0-9_]*):\s*\[REDACTED\]$/gm,
-    (match, indent: string, key: string) => {
-      const original = origVars.get(key);
-      if (original) {
-        return `${indent}${key}: ${original}`;
+  const found: { path: Path; key: string; listForm: boolean; set: (v: string | number | boolean) => void }[] = [];
+  const walk = (node: unknown, path: Path): void => {
+    if (isMap(node)) {
+      for (const pair of node.items) {
+        const k = isScalar(pair.key) ? pair.key.value : pair.key;
+        if (typeof k !== "string" && typeof k !== "number") continue;
+        const p = [...path, k];
+        if (isPlaceholderNode(pair.value)) {
+          found.push({ path: p, key: String(k), listForm: false, set: (v) => { pair.value = doc.createNode(v); } });
+        } else {
+          walk(pair.value, p);
+        }
       }
-      return match;
+    } else if (isSeq(node)) {
+      node.items.forEach((item, i) => {
+        const p = [...path, i];
+        if (isScalar(item) && typeof item.value === "string") {
+          const m = LIST_PLACEHOLDER.exec(item.value);
+          if (m) {
+            found.push({ path: p, key: m[1], listForm: true, set: (v) => { item.value = `${m[1]}=${v}`; } });
+            return;
+          }
+        }
+        walk(item, p);
+      });
     }
-  );
+  };
+  walk(doc.contents, []);
 
-  // List form: restore - KEY=[REDACTED]
-  restored = restored.replace(
-    /^(\s+-\s+)([A-Z_][A-Z0-9_]*)=\[REDACTED\]$/gm,
-    (match, prefix: string, key: string) => {
-      const original = origVars.get(key);
-      if (original) {
-        return `${prefix}${key}=${original}`;
-      }
-      return match;
+  for (const f of found) {
+    const where = f.listForm ? [...f.path.slice(0, -1), f.key].join(".") : f.path.join(".");
+    const values = parsed.map((src) => lookup(src, f.path, f.key, f.listForm));
+    const first = values.findIndex(usable);
+    if (first === -1) {
+      result.unresolved.push(where);
+      continue;
     }
-  );
+    const value = values[first] as string | number | boolean;
+    f.set(value);
+    result.restored.push({ path: where, source: first });
+    if (values.slice(first + 1).some((v) => usable(v) && String(v) !== String(value))) result.stale.push(where);
+  }
 
-  return restored;
+  if (found.length) result.yaml = doc.toString({ lineWidth: 0 });
+  return result;
+}
+
+/** Single-source restore; unresolved placeholders are left as-is. */
+export function restoreRedactedValues(editedYaml: string, originalYaml: string): string {
+  return restoreComposeRedactions(editedYaml, [originalYaml]).yaml;
 }
