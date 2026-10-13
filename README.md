@@ -460,9 +460,14 @@ environment:
 
 Preserved values are read from the **live service state**, not the stored stack file — the two diverge whenever a var is changed through `update_service_env` or the Swarmpit UI. If they disagree for a var being restored, `update_stack` says so in its result.
 
+Restoration is structural: each placeholder is filled from the **same service and key** (or the same path outside `services`), so two services sharing a name like `ALERT_WEBHOOK` each keep their own value. Quoted (`'[REDACTED]'`, `"[REDACTED]"`), list (`- KEY=[REDACTED]`, `- "KEY=[REDACTED]"`) and commented forms all work. A placeholder that neither the live state nor the stack file can fill makes `update_stack` refuse the write (and `dry_run` reports it) instead of shipping the literal string.
+
 ### Service specs
 
 `update_service` applies the same protection: any env var left as `[REDACTED]` is restored from the live service before the write, so a `get_service` → edit one field → `update_service` round-trip can't overwrite secrets with the placeholder. Restored names are listed in the result as `restoredVars`.
+A `[REDACTED]` variable the live service doesn't have is refused rather than written.
+
+As a last line of defence the client never sends a write request whose body contains `[REDACTED]`, whichever tool built it.
 
 ### Previewing a write
 
@@ -507,6 +512,20 @@ For stacks the diff is **semantic, not line-based** — the two composes are par
 Compared with a text diff this survives duplicate lines (`restart: always` in three services), key reordering, and the `$$` escaping Swarmpit applies to generated compose — and every change arrives attributed to the service it belongs to.
 
 Env var **values only appear when the redaction mode would have shown them anyway**: never in `all`, only for non-sensitive names in `sensitive`, and freely in `none`. A changed value you can't see is still reported by name, both in `environment.changed` and in the document-wide `secretsChanged` list, so you always know *that* a secret moved without it being printed into the conversation.
+
+### Compose history
+
+If your Swarmpit serves `/api/stacks/{name}/history`, `get_stack_history` lists past revisions of a stack — newest first, **metadata only** by default, since an uncapped history of full composes is exactly the payload problem to avoid:
+
+```jsonc
+{ "entries": [
+  { "index": 0, "at": "...", "by": "claude", "comment": "bump nginx for CVE-2026-1234", "trigger": {"kind": "stack-update"} },
+  { "index": 1, "at": "...", "by": "admin",  "comment": "initial rollout", "trigger": {"kind": "stack-create"} } ] }
+```
+
+Pass `index` for one revision's compose (sanitized like every other compose path), or `index` + `diff: true` to get the semantic diff between that revision and the live stack.
+
+Every stack write — `create_stack`, `update_stack`, `redeploy_stack`, `rollback_stack` — takes an optional `comment`: a one-line title for the change, written like a commit subject. It is recorded in the history and shown in Swarmpit's UI, which has no field for it, so an agent making the change is the one best placed to explain it. Older Swarmpit versions ignore the parameter.
 
 ### Large payloads
 

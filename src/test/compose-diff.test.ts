@@ -162,3 +162,76 @@ version: "3.8"
     assert.deepEqual(diffCompose(base, base), { changed: false });
   });
 });
+
+describe("stack history tool", () => {
+  const mockServer = () => {
+    const handlers: Record<string, Function> = {};
+    return { handlers, tool: (n: string, _d: string, _s: unknown, h: Function) => { handlers[n] = h; } };
+  };
+  const body = (r: any) => JSON.parse(r.content[0].text);
+
+  const HISTORY = [
+    { at: "2026-08-20T10:00:00Z", by: "admin", comment: "initial rollout",
+      trigger: { kind: "stack-create" },
+      spec: { compose: "services:\n  web:\n    image: nginx:1.0\n    environment:\n      TOKEN: old\n" } },
+    { at: "2026-08-21T10:00:00Z", by: "claude", comment: "bump nginx for CVE-2026-1234",
+      trigger: { kind: "stack-update" },
+      spec: { compose: "services:\n  web:\n    image: nginx:2.0\n    environment:\n      TOKEN: new\n" } },
+  ];
+
+  const setup = async (redact: "all" | "sensitive" | "none" = "all") => {
+    const { registerStackTools } = await import("../tools/stacks.js");
+    const server = mockServer();
+    const calls: any[] = [];
+    const client = {
+      getStackHistory: async () => HISTORY,
+      getStackCompose: async () => ({ compose: "services:\n  web:\n    image: nginx:3.0\n    environment:\n      TOKEN: new\n" }),
+      getStackFile: async () => ({ compose: "" }),
+      updateStack: (...a: unknown[]) => { calls.push(["updateStack", ...a]); return Promise.resolve(); },
+      redeployStack: (...a: unknown[]) => { calls.push(["redeployStack", ...a]); return Promise.resolve(); },
+      createStack: (...a: unknown[]) => { calls.push(["createStack", ...a]); return Promise.resolve(); },
+    };
+    registerStackTools(server as never, client as never, redact);
+    return { server, calls };
+  };
+
+  it("lists newest first, metadata only, no composes", async () => {
+    const { server } = await setup();
+    const out = body(await server.handlers.get_stack_history({ name: "app" }));
+    assert.deepEqual(out.entries.map((e: any) => e.comment),
+      ["bump nginx for CVE-2026-1234", "initial rollout"]);
+    assert.equal(JSON.stringify(out).includes("nginx:1.0"), false, "composes stay out of the listing");
+  });
+
+  it("returns one revision's compose, redacted", async () => {
+    const { server } = await setup("all");
+    const out = body(await server.handlers.get_stack_history({ name: "app", index: 1 }));
+    assert.ok(out.compose.includes("nginx:1.0"));
+    assert.equal(out.compose.includes("TOKEN: old"), false);
+    assert.ok(out.compose.includes("[REDACTED]"));
+  });
+
+  it("diffs a revision against live, semantically", async () => {
+    const { server } = await setup("sensitive");
+    const out = body(await server.handlers.get_stack_history({ name: "app", index: 1, diff: true }));
+    assert.deepEqual(out.changesSinceThisRevision.services.changed.web.image,
+      { from: "nginx:1.0", to: "nginx:3.0" });
+    assert.deepEqual(out.changesSinceThisRevision.secretsChanged, ["TOKEN"]);
+    assert.equal(JSON.stringify(out).includes("TOKEN: new"), false);
+  });
+
+  it("errors on an out-of-range index", async () => {
+    const { server } = await setup();
+    const out: any = await server.handlers.get_stack_history({ name: "app", index: 9 });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /has 2/);
+  });
+
+  it("passes the comment through to write calls", async () => {
+    const { server, calls } = await setup();
+    await server.handlers.update_stack({ name: "app", compose: "services: {}\n", comment: "retire worker" });
+    await server.handlers.redeploy_stack({ name: "app", comment: "pick up new image" });
+    assert.equal(calls[0][3], "retire worker");
+    assert.equal(calls[1][2], "pick up new image");
+  });
+});

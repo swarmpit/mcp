@@ -6,9 +6,7 @@ import {
   sanitizeServices,
   sanitizeComposeYaml,
   resolveComposeEnvRefs,
-  restoreRedactedValues,
-  extractComposeEnvVars,
-  redactedComposeKeys,
+  restoreComposeRedactions,
 } from "../sanitize.js";
 import { toolResult, toolError, resolveData } from "./helpers.js";
 import { diffCompose } from "../compose-diff.js";
@@ -68,12 +66,18 @@ export function registerStackTools(
     {
       name: z.string().describe("Stack name"),
       compose: composeInput.describe("Compose YAML string or { $file: /path }"),
+      comment: z
+        .string()
+        .optional()
+        .describe(
+          "Short one-line title for this change, recorded in the stack's compose history (e.g. 'bump api to 2.3.0, raise memory limit'). Write it as you would a commit subject."
+        ),
     },
-    async ({ name, compose }) => {
+    async ({ name, compose, comment }) => {
       try {
         const yaml = resolveData(compose);
         const resolved = resolveComposeEnvRefs(yaml);
-        await client.createStack({ name, spec: { compose: resolved } });
+        await client.createStack({ name, spec: { compose: resolved } }, comment);
         return toolResult({ created: true, name });
       } catch (e) {
         return toolError(e);
@@ -91,8 +95,14 @@ export function registerStackTools(
         .boolean()
         .optional()
         .describe("Report what would change without writing anything"),
+      comment: z
+        .string()
+        .optional()
+        .describe(
+          "Short one-line title for this change, recorded in the stack's compose history (e.g. 'bump api to 2.3.0, raise memory limit'). Write it as you would a commit subject."
+        ),
     },
-    async ({ name, compose, dry_run }) => {
+    async ({ name, compose, dry_run, comment }) => {
       try {
         const yaml = resolveData(compose);
         // Live service state is the source of truth — the stored stack file goes
@@ -101,18 +111,14 @@ export function registerStackTools(
           client.getStackCompose(name).catch(() => ({ compose: "" })),
           client.getStackFile(name).catch(() => ({ compose: "" })),
         ]);
-        const restored = restoreRedactedValues(
-          restoreRedactedValues(yaml, live.compose),
-          file.compose
-        );
+        const { yaml: restored, stale, unresolved } = restoreComposeRedactions(yaml, [live.compose, file.compose]);
+        if (unresolved.length) {
+          throw new Error(
+            `Refusing to write: [REDACTED] has no live or stored value at ${unresolved.join(", ")}. ` +
+              "Use the real value, $env:VAR, or drop the key."
+          );
+        }
         const resolved = resolveComposeEnvRefs(restored);
-
-        const liveVars = extractComposeEnvVars(live.compose);
-        const fileVars = extractComposeEnvVars(file.compose);
-        const stale = redactedComposeKeys(yaml).filter((key) => {
-          const l = liveVars.get(key);
-          return l !== undefined && fileVars.has(key) && fileVars.get(key) !== l;
-        });
         const staleWarning = stale.length
           ? {
               warning:
@@ -131,7 +137,7 @@ export function registerStackTools(
           });
         }
 
-        await client.updateStack(name, resolved);
+        await client.updateStack(name, resolved, comment);
 
         return toolResult({ updated: true, name, ...staleWarning });
       } catch (e) {
@@ -143,10 +149,17 @@ export function registerStackTools(
   server.tool(
     "redeploy_stack",
     "Redeploy all services in a Docker Swarm stack",
-    { name: z.string().describe("Stack name") },
-    async ({ name }) => {
+    { name: z.string().describe("Stack name"),
+      comment: z
+        .string()
+        .optional()
+        .describe(
+          "Short one-line title for this change, recorded in the stack's compose history (e.g. 'bump api to 2.3.0, raise memory limit'). Write it as you would a commit subject."
+        ),
+    },
+    async ({ name, comment }) => {
       try {
-        await client.redeployStack(name);
+        await client.redeployStack(name, comment);
         return toolResult({ redeployed: true, name });
       } catch (e) {
         return toolError(e);
@@ -157,10 +170,17 @@ export function registerStackTools(
   server.tool(
     "rollback_stack",
     "Rollback all services in a Docker Swarm stack to their previous version",
-    { name: z.string().describe("Stack name") },
-    async ({ name }) => {
+    { name: z.string().describe("Stack name"),
+      comment: z
+        .string()
+        .optional()
+        .describe(
+          "Short one-line title for this change, recorded in the stack's compose history (e.g. 'bump api to 2.3.0, raise memory limit'). Write it as you would a commit subject."
+        ),
+    },
+    async ({ name, comment }) => {
       try {
-        await client.rollbackStack(name);
+        await client.rollbackStack(name, comment);
         return toolResult({ rolledBack: true, name });
       } catch (e) {
         return toolError(e);
@@ -196,6 +216,62 @@ export function registerStackTools(
       try {
         await client.deleteStack(name);
         return toolResult({ deleted: true, name });
+      } catch (e) {
+        return toolError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "get_stack_history",
+    "List past compose revisions of a stack (newest first). Returns metadata only unless index is given — the composes are large. Requires a Swarmpit version with /api/stacks/{name}/history.",
+    {
+      name: z.string().describe("Stack name"),
+      index: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Return the compose of this entry (0 = most recent)"),
+      diff: z
+        .boolean()
+        .optional()
+        .describe("With index: diff that revision against the live stack instead of returning its compose"),
+    },
+    async ({ name, index, diff }) => {
+      try {
+        const history = await client.getStackHistory(name);
+        const entries = [...history].reverse();
+        const summary = entries.map((e, i) => ({
+          index: i,
+          at: e.at,
+          by: e.by,
+          ...(e.comment ? { comment: e.comment } : {}),
+          ...(e.trigger ? { trigger: e.trigger } : {}),
+        }));
+
+        if (index === undefined) return toolResult({ name, entries: summary });
+
+        const entry = entries[index];
+        if (!entry) {
+          return toolError(`No history entry at index ${index} — the stack has ${entries.length}`);
+        }
+        const compose = entry.spec?.compose ?? "";
+
+        if (diff) {
+          const live = await client.getStackCompose(name);
+          return toolResult({
+            name,
+            entry: summary[index],
+            changesSinceThisRevision: diffCompose(compose, live.compose, { redact }),
+          });
+        }
+
+        return toolResult({
+          name,
+          entry: summary[index],
+          compose: redact === "none" ? compose : sanitizeComposeYaml(compose, redact === "all"),
+        });
       } catch (e) {
         return toolError(e);
       }
