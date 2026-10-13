@@ -188,7 +188,10 @@ export function filterLogs(entries: unknown[], options: LogFilterOptions = {}): 
       // Explicit /regex/ is case-sensitive unless it says otherwise; only the
       // plain-substring form is forgiving about case.
       const re = new RegExp(raw.slice(1, end), raw.slice(end + 1));
-      test = (line) => re.test(line);
+      test = (line) => {
+        re.lastIndex = 0;
+        return re.test(line);
+      };
     } else {
       const needle = raw.toLowerCase();
       test = (line) => line.toLowerCase().includes(needle);

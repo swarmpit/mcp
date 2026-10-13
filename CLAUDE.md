@@ -82,17 +82,18 @@ Three layers keep user secrets out of the conversation:
 
 1. **Response sanitization** (`sanitize.ts`)
    - `sanitizeService`: env var values replaced with `[REDACTED]`. `all` redacts all, `sensitive` matches name patterns (`pass`, `secret`, `token`, `key`, `auth`, `credential`, `private`, `dsn`, `connection.?string`) + user-provided `SWARMPIT_REDACT_PATTERNS`.
-   - `sanitizeComposeYaml`: same redaction applied to YAML env vars (both `KEY: val` and `- KEY=val` forms).
+   - `sanitizeComposeYaml`: parsed YAML-node redaction, including aliases, merges, flow collections, multiline scalars, and quoted/lowercase keys. Sanitized output omits comments; invalid YAML fails closed through `compose-yaml.ts`.
    - Secrets/configs `data` field zeroed unless mode is `none`.
 
 2. **`$env:` / `$file` references in tool inputs** (`helpers.ts::resolveEnvRef`, `resolveData`)
    - `update_service_env` accepts `{ $env: "MY_SECRET" }` per-var — resolved from `process.env` server-side.
-   - `create_stack` / `update_stack` / `create_stack_file` accept YAML with `$env:VAR_NAME` tokens (string or `{ $file: /path }`) — `resolveComposeEnvRefs` replaces them before sending.
+   - `create_stack` / `update_stack` / `create_stack_file` accept YAML with `$env:VAR_NAME` tokens (string or `{ $file: /path }`) — `resolveComposeEnvRefs` replaces scalar values, preserving strings and escaping dollars for Docker. Missing or partial references fail closed.
    - `create_secret` / `create_config` accept `{ $file: /path }` to read payload from disk (saves thousands of tokens on HTML pages, certs, large compose files).
 
 3. **`[REDACTED]` round-trip on writes** (`sanitize.ts::restoreRedactedValues`, `helpers.ts::restoreRedactedVariables`)
    - `get_stack` returns compose with sensitive values as `[REDACTED]`.
    - `update_stack` restores `[REDACTED]` from `getStackCompose` (live service state) first, falling back to `getStackFile` (stored record) — the stack file goes stale the moment a var is changed via `update_service_env` or the UI. Divergence between the two is reported as a `warning` in the tool result.
+   - Live-read failures abort; only a missing stored file (HTTP 404) is tolerated. Aliases/merges are expanded before restoration so shared anchors cannot roll back a service's live credential. Redacted top-level `x-` templates are dropped after expansion, avoiding unused copies of obsolete credentials.
    - `update_service` restores `[REDACTED]` env vars from a fresh `getService` before writing, unconditionally (not gated on redact mode). Without this, a `get_service` → edit → `update_service` round-trip writes the literal string into the container.
 
    Any new write path that accepts caller-supplied env vars must do the same — redaction only holds if every write undoes it.
@@ -103,11 +104,11 @@ Three layers keep user secrets out of the conversation:
 
 ## Semantic compose diff
 
-`compose-diff.ts` parses both documents (the `yaml` package — the only runtime dep beyond the MCP SDK and zod) and compares them structurally: services added/removed/changed, per-service field deltas, list membership for arrays, env normalised across the `KEY: value` and `- KEY=value` forms.
+`compose-diff.ts` parses both documents and compares them structurally: services added/removed/changed, per-service field deltas, ordered arrays by position, set-like fields such as ports by membership, and env normalised across map/list forms.
 
 It exists because the line-based diff it replaced was a set difference, which silently missed changes when a line appeared in both documents at different multiplicity (`restart: always` in several services), reported `image: a` → `image: b` as unrelated add/remove, and couldn't attribute a line to its service. There is a test that reproduces exactly that miss.
 
-`unescapeCompose` is applied to both sides first: `api/stack-compose` upstream does `(str/replace yaml "$" "$$")`, so a generated compose and a user-authored one differ on every `$` otherwise.
+Never normalize away `$$`: generated live composes escape runtime dollars so they survive redeployment, whereas an authored `$VAR` is interpolated by Docker. The preview compares deployable syntax; it cannot evaluate the remote environment.
 
 4. **`SWARMPIT_TOKEN_FILE` to keep the token out of MCP client configs** (`config.ts::loadToken`)
    - If `SWARMPIT_TOKEN_FILE` is set, token is read from the referenced path at startup. Takes precedence over `SWARMPIT_TOKEN`.
@@ -133,7 +134,9 @@ Real Swarmpit behaviour diverges from its own Swagger spec in several places. Ke
 
 - **Timeseries endpoints (`/api/nodes/ts`, `/api/services/ts/cpu|memory`, `/api/tasks/{name}/ts`) return huge payloads** — often >100KB, as parallel arrays (`{ time: [...], cpu: [...] }`), sometimes wrapped under a metric key (`{ cpu: { service, time, cpu } }`). `timeseries.ts::reduceTimeseries` walks the payload shape-agnostically and buckets every series it finds; stats are computed from the full series *before* downsampling, so `stats.max` is the true peak. Defaults to 12 points — the tools are safe to call directly now.
 
-- **`clojure.spec` 400s are machine-readable** — `client.ts::formatSpecError` turns the `problems` array into `field must be <type>, got <value>` lines, mapping the common `clojure.core/*` predicates. Extend `SPEC_PREDICATES` when a new one shows up; anything unmapped falls through as the raw predicate name rather than being swallowed.
+- **`clojure.spec` 400s can echo secrets** — `client.ts::formatSpecError` only returns whitelisted field names and known predicate descriptions. Never return rejected values, raw predicates, response bodies, status text, or JSON parser excerpts.
+
+- **User edits only support role/email** — `edit_user` refuses passwords and unknown fields, fetches the full record locally, and forwards only required metadata plus supported changes. Do not advertise password rotation through this endpoint; the backend silently ignores it.
 
 ## Adding a new tool
 

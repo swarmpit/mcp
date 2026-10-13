@@ -168,6 +168,10 @@ A single-instance setup is unchanged in every respect: `SWARMPIT_URL` + `SWARMPI
 
 User records never contain a password hash (the Swarmpit server strips it), but in the non-`none` modes the API-token metadata (`jti`, `mask`) and CouchDB `_rev` are dropped too — `list_users`/`get_user` report only `hasApiToken: true`.
 
+The same mode applies to `get_service_env`, compose exports, nested services in `list_stacks`, and all services-using-resource tools. Requesting a variable by name does not bypass redaction. Compose sanitization parses YAML, including quoted/lowercase keys, flow syntax, multiline values, and anchors; comments are omitted from sanitized output. Invalid or unsafe YAML is refused without returning source excerpts.
+
+API errors report HTTP status and recognized field/type diagnostics, not rejected values, unknown predicates, or raw response bodies. This also protects secrets resolved through `$env`/`$file` when a write fails. Inspect server logs locally for additional diagnostics.
+
 > **Warning:** `none` mode sends all environment variables, secrets, and config data in full to the LLM provider. Only use this with a local model (e.g. via ollama/opencode) or on servers that definitely do not contain any sensitive environment variables or configs. Never use `none` with cloud-hosted LLM providers on production infrastructure.
 
 Built-in sensitive patterns: `pass`, `secret`, `token`, `key`, `auth`, `credential`, `private`, `dsn`, `connection_string`.
@@ -288,16 +292,18 @@ Add custom patterns via `SWARMPIT_REDACT_PATTERNS`:
 | `list_users` | List all Swarmpit users (redacted) |
 | `get_user` | Get user details (redacted) |
 | `create_user` | Create a user (password accepts `$env`/`$file`) |
-| `edit_user` | Edit user properties (`spec.password` accepts `$env`/`$file`) |
+| `edit_user` | Edit role and/or email; password changes are rejected |
 | `delete_user` | Delete (requires `confirm: true`) |
 
-Pass user passwords by reference so the plaintext never enters the conversation or the tool-call transcript:
+When creating a user, pass the password by reference so the plaintext never enters the conversation or the tool-call transcript:
 
 ```json
 { "username": "svc", "role": "user", "password": { "$env": "NEW_USER_PASSWORD" } }
 ```
 
 `{ "$file": "/path/to/password" }` works too. A literal string is still accepted, but it is recorded verbatim in the model's context and in the session transcript.
+
+`edit_user` accepts only `spec.role` and `spec.email` and fetches required user metadata locally. The upstream edit endpoint ignores passwords, so the tool refuses password changes instead of reporting a successful rotation. Use Swarmpit's supported password-change workflow separately.
 
 ### Dashboard
 
@@ -443,12 +449,12 @@ When reading stacks, env var values are redacted according to the redaction mode
 # Returned by get_stack (sensitive mode):
 environment:
   NODE_ENV: production           # visible
-  DB_PASSWORD: [REDACTED]        # redacted
+  DB_PASSWORD: "[REDACTED]"      # redacted
 
 # Sent to update_stack — only NODE_ENV changed:
 environment:
   NODE_ENV: staging              # new value
-  DB_PASSWORD: [REDACTED]        # preserved from current stack
+  DB_PASSWORD: "[REDACTED]"      # preserved from current stack
 ```
 
 Use `$env:VAR_NAME` for new secrets in compose:
@@ -458,7 +464,11 @@ environment:
   NEW_SECRET: $env:MY_SECRET     # resolved locally
 ```
 
+References may be quoted and used in map or `KEY=$env:VAR_NAME` list form. Resolved values remain strings, including empty strings, numbers, comments, quotes, and newlines. Dollar signs in locally resolved values are escaped for Docker so they stay literal. Missing or partial references are refused; use `$$env:NAME` for an intentional literal `$env:NAME`.
+
 Preserved values are read from the **live service state**, not the stored stack file — the two diverge whenever a var is changed through `update_service_env` or the Swarmpit UI. If they disagree for a var being restored, `update_stack` says so in its result.
+
+An unavailable live compose aborts both updates and previews. A missing stored file (HTTP 404) is allowed if the live state supplies the values; other read failures or malformed restoration sources abort. Shared anchors and merges are expanded before restoration so each service keeps its own live values, even when they differ. Redacted top-level `x-` templates are removed after their consumers are inlined, preventing unused copies of obsolete credentials; unrelated extension metadata is kept. Formatting and comments may change when placeholders are restored.
 
 Restoration is structural: each placeholder is filled from the **same service and key** (or the same path outside `services`), so two services sharing a name like `ALERT_WEBHOOK` each keep their own value. Quoted (`'[REDACTED]'`, `"[REDACTED]"`), list (`- KEY=[REDACTED]`, `- "KEY=[REDACTED]"`) and commented forms all work. A placeholder that neither the live state nor the stack file can fill makes `update_stack` refuse the write (and `dry_run` reports it) instead of shipping the literal string.
 
@@ -509,7 +519,7 @@ For stacks the diff is **semantic, not line-based** — the two composes are par
 }
 ```
 
-Compared with a text diff this survives duplicate lines (`restart: always` in three services), key reordering, and the `$$` escaping Swarmpit applies to generated compose — and every change arrives attributed to the service it belongs to.
+Compared with a text diff this survives duplicate lines (`restart: always` in three services) and key reordering, and every change arrives attributed to its service. Ordered arrays such as `command`, `entrypoint`, `healthcheck.test`, and `env_file` are compared positionally. `$VAR` and `$$VAR` are different: Docker interpolates the former and treats the latter as a literal dollar sign. Previews retain that distinction and do not evaluate variables from the remote Docker environment.
 
 Env var **values only appear when the redaction mode would have shown them anyway**: never in `all`, only for non-sensitive names in `sensitive`, and freely in `none`. A changed value you can't see is still reported by name, both in `environment.changed` and in the document-wide `secretsChanged` list, so you always know *that* a secret moved without it being printed into the conversation.
 
@@ -534,7 +544,11 @@ Two tool families return far more than fits comfortably in context, so both redu
 - **Timeseries** (`get_nodes_timeseries`, `get_services_*_timeseries`, `get_task_timeseries`) accept `points` (bucket count, default 12), `agg` (`avg`/`max`/`min`), `match` (filter series by name) and `stats_only`. Summary statistics are computed from the *full* series before downsampling, so `stats.max` is the real peak, not the peak of an average. A 30-service / 720-sample payload comes back over 10× smaller by default.
 - **`service_logs`** accepts `grep` (substring, or `/regex/flags`) and `tail`, applied before the result is returned. The reply reports `total`, `returned` and what was `dropped`, so a filtered view never looks like the whole log.
 
+Regex matching starts fresh for each log entry, including when `g` or `y` is supplied.
+
 ## Development
+
+The SDK's HTTP adapter is constrained to its patched Node 18-compatible 1.19.x line so dependency resolution does not pull in the Node 20-only 2.x line. This server still uses stdio, not HTTP.
 
 ```bash
 git clone https://github.com/swarmpit/mcp

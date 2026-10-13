@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { parse } from "yaml";
 import {
   sanitizeService,
   sanitizeServices,
@@ -132,8 +133,8 @@ describe("sanitizeComposeYaml", () => {
       NODE_ENV: production
       DB_HOST: localhost`;
     const result = sanitizeComposeYaml(yaml, true);
-    assert.ok(result.includes("NODE_ENV: [REDACTED]"));
-    assert.ok(result.includes("DB_HOST: [REDACTED]"));
+    assert.equal(parse(result).services.app.environment.NODE_ENV, "[REDACTED]");
+    assert.equal(parse(result).services.app.environment.DB_HOST, "[REDACTED]");
   });
 
   it("only redacts sensitive vars when redactAll=false", () => {
@@ -144,7 +145,7 @@ describe("sanitizeComposeYaml", () => {
       DB_PASSWORD: secret123`;
     const result = sanitizeComposeYaml(yaml, false);
     assert.ok(result.includes("NODE_ENV: production"));
-    assert.ok(result.includes("DB_PASSWORD: [REDACTED]"));
+    assert.equal(parse(result).services.app.environment.DB_PASSWORD, "[REDACTED]");
   });
 
   it("redacts list form env vars", () => {
@@ -183,7 +184,7 @@ describe("resolveComposeEnvRefs", () => {
     process.env.TEST_SECRET = "resolved-value";
     const yaml = `    DB_PASSWORD: $env:TEST_SECRET`;
     const result = resolveComposeEnvRefs(yaml);
-    assert.ok(result.includes("DB_PASSWORD: resolved-value"));
+    assert.equal(parse(result).DB_PASSWORD, "resolved-value");
     delete process.env.TEST_SECRET;
   });
 
@@ -191,7 +192,7 @@ describe("resolveComposeEnvRefs", () => {
     process.env.TEST_SECRET = "resolved-value";
     const yaml = `      - DB_PASSWORD=$env:TEST_SECRET`;
     const result = resolveComposeEnvRefs(yaml);
-    assert.ok(result.includes("- DB_PASSWORD=resolved-value"));
+    assert.deepEqual(parse(result), ["DB_PASSWORD=resolved-value"]);
     delete process.env.TEST_SECRET;
   });
 

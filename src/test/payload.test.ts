@@ -280,14 +280,14 @@ describe("formatSpecError", () => {
     assert.equal(
       msg,
       "Swarmpit rejected the request body:\n" +
-        "  mounts.volumeOptions must be an object, got null\n" +
-        "  deployment.maxReplicas must be a number, got null"
+        "  mounts.volumeOptions must be an object\n" +
+        "  deployment.maxReplicas must be a number"
     );
   });
 
-  it("falls back to the raw predicate when unmapped", () => {
+  it("withholds unknown predicates and paths", () => {
     const msg = formatSpecError(JSON.stringify({ problems: [{ path: ["x"], pred: "my.ns/even?", val: 3 }] }));
-    assert.match(msg!, /x must be my\.ns\/even\?, got 3/);
+    assert.equal(msg, "Swarmpit rejected the request body:\n  (request body) must be a valid value");
   });
 
   it("caps the list and says how many were hidden", () => {

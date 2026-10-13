@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RedactMode } from "../config.js";
-import { SwarmpitClient } from "../client.js";
+import { SwarmpitApiError, SwarmpitClient } from "../client.js";
 import {
   sanitizeServices,
   sanitizeComposeYaml,
@@ -23,7 +23,10 @@ export function registerStackTools(
     async () => {
       try {
         const stacks = await client.listStacks();
-        return toolResult(stacks);
+        return toolResult(redact === "none" ? stacks : stacks.map((stack) => ({
+          ...stack,
+          services: sanitizeServices(stack.services ?? [], redact === "all"),
+        })));
       } catch (e) {
         return toolError(e);
       }
@@ -108,8 +111,11 @@ export function registerStackTools(
         // Live service state is the source of truth — the stored stack file goes
         // stale whenever a var is changed via update_service_env or the UI.
         const [live, file] = await Promise.all([
-          client.getStackCompose(name).catch(() => ({ compose: "" })),
-          client.getStackFile(name).catch(() => ({ compose: "" })),
+          client.getStackCompose(name),
+          client.getStackFile(name).catch((error: unknown) => {
+            if (error instanceof SwarmpitApiError && error.status === 404) return { compose: "" };
+            throw error;
+          }),
         ]);
         const { yaml: restored, stale, unresolved } = restoreComposeRedactions(yaml, [live.compose, file.compose]);
         if (unresolved.length) {

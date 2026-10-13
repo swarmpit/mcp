@@ -1,15 +1,6 @@
-import { parse, YAMLParseError } from "yaml";
+import { parseComposeDocument } from "./compose-yaml.js";
 import type { RedactMode } from "./config.js";
 import { isSensitiveEnvVar } from "./sanitize.js";
-
-/**
- * Swarmpit's stack-compose endpoint escapes `$` as `$$` before returning YAML,
- * while a user-authored compose does not. Comparing the two forms directly
- * reports a change on every line containing a variable reference.
- */
-export function unescapeCompose(yaml: string): string {
-  return yaml.replace(/\$\$/g, "$");
-}
 
 export interface ComposeDiffOptions {
   redact?: RedactMode;
@@ -25,6 +16,13 @@ interface EnvDelta {
   removed?: string[];
   changed?: (string | { name: string; from: unknown; to: unknown })[];
 }
+
+interface RedactionContext {
+  names: Set<string>;
+  values: Set<string>;
+}
+
+const UNORDERED_FIELDS = new Set(["ports", "networks", "volumes", "secrets", "configs", "cap_add", "cap_drop", "expose"]);
 
 function listDelta(before: unknown[], after: unknown[]): ListDelta | undefined {
   const key = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
@@ -69,7 +67,8 @@ function normalizeEnv(value: unknown): Map<string, string | null> {
 function envDelta(
   before: unknown,
   after: unknown,
-  redact: RedactMode
+  redact: RedactMode,
+  context: RedactionContext
 ): EnvDelta | undefined {
   const b = normalizeEnv(before);
   const a = normalizeEnv(after);
@@ -82,7 +81,8 @@ function envDelta(
     if (!b.has(name) || b.get(name) === value) continue;
     // Values are only shown when the redaction mode would have shown them
     // anyway — never widen what reaches the model.
-    const show = redact === "none" || (redact === "sensitive" && !isSensitiveEnvVar(name));
+    const show = redact === "none" || (redact === "sensitive" && !isSensitiveEnvVar(name)
+      && !context.values.has(value ?? "") && !context.values.has(b.get(name) ?? ""));
     changed.push(show ? { name, from: b.get(name), to: value } : name);
   }
 
@@ -97,25 +97,26 @@ function envDelta(
 function displayValue(
   value: unknown,
   redact: RedactMode,
-  envNames: Set<string>,
+  context: RedactionContext,
   key = "",
   environment = false
 ): unknown {
   if (redact === "none" || value === null || value === undefined) return value;
-  const envKey = environment || envNames.has(key) || /^[A-Z_][A-Z0-9_]*$/.test(key);
+  if (typeof value !== "object" && context.values.has(String(value))) return "[REDACTED]";
+  const envKey = environment || context.names.has(key) || /^[A-Z_][A-Z0-9_]*$/.test(key);
   if (envKey && (redact === "all" || isSensitiveEnvVar(key))) return "[REDACTED]";
+  if (typeof value === "string") {
+    const match = /^([A-Za-z_][A-Za-z0-9_.-]*)=(.*)$/s.exec(value);
+    if (match && (redact === "all" || isSensitiveEnvVar(match[1]) || context.values.has(match[2]))) {
+      return `${match[1]}=[REDACTED]`;
+    }
+  }
   if (Array.isArray(value)) {
-    return value.map((entry) => {
-      if (typeof entry === "string") {
-        const match = /^([A-Za-z_][A-Za-z0-9_.-]*)=/.exec(entry);
-        if (match && (redact === "all" || isSensitiveEnvVar(match[1]))) return `${match[1]}=[REDACTED]`;
-      }
-      return displayValue(entry, redact, envNames);
-    });
+    return value.map((entry) => displayValue(entry, redact, context));
   }
   if (typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([name, entry]) => [
-      name, displayValue(entry, redact, envNames, name, key === "environment"),
+      name, displayValue(entry, redact, context, name, key === "environment"),
     ]));
   }
   return value;
@@ -125,7 +126,7 @@ function serviceDelta(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
   redact: RedactMode,
-  envNames: Set<string>
+  context: RedactionContext
 ): Record<string, unknown> | undefined {
   const delta: Record<string, unknown> = {};
 
@@ -134,7 +135,7 @@ function serviceDelta(
     const a = after[key];
 
     if (key === "environment") {
-      const env = envDelta(b, a, redact);
+      const env = envDelta(b, a, redact, context);
       if (env) delta.environment = env;
       continue;
     }
@@ -142,20 +143,27 @@ function serviceDelta(
     if (JSON.stringify(b) === JSON.stringify(a)) continue;
 
     if (Array.isArray(b) || Array.isArray(a)) {
-      const list = listDelta(Array.isArray(b) ? b : [], Array.isArray(a) ? a : []);
-      if (list) delta[key] = displayValue(list, redact, envNames, key);
+      if (UNORDERED_FIELDS.has(key) && Array.isArray(b) && Array.isArray(a)) {
+        const list = listDelta(b, a);
+        if (list) delta[key] = displayValue(list, redact, context, key);
+      } else {
+        delta[key] = {
+          from: displayValue(b ?? null, redact, context, key),
+          to: displayValue(a ?? null, redact, context, key),
+        };
+      }
       continue;
     }
 
     if (b && a && typeof b === "object" && typeof a === "object") {
-      const nested = serviceDelta(b as Record<string, unknown>, a as Record<string, unknown>, redact, envNames);
+      const nested = serviceDelta(b as Record<string, unknown>, a as Record<string, unknown>, redact, context);
       if (nested) delta[key] = nested;
       continue;
     }
 
     delta[key] = {
-      from: displayValue(b ?? null, redact, envNames, key),
-      to: displayValue(a ?? null, redact, envNames, key),
+      from: displayValue(b ?? null, redact, context, key),
+      to: displayValue(a ?? null, redact, context, key),
     };
   }
 
@@ -166,7 +174,7 @@ function sectionDelta(
   before: Record<string, unknown> | undefined,
   after: Record<string, unknown> | undefined,
   redact: RedactMode,
-  envNames: Set<string>
+  context: RedactionContext
 ) {
   const b = before ?? {};
   const a = after ?? {};
@@ -180,7 +188,7 @@ function sectionDelta(
       (b[name] ?? {}) as Record<string, unknown>,
       (a[name] ?? {}) as Record<string, unknown>,
       redact,
-      envNames
+      context
     );
     if (d) changed[name] = d;
   }
@@ -222,20 +230,25 @@ export function diffCompose(
   let before: Record<string, unknown>;
   let after: Record<string, unknown>;
   try {
-    before = (parse(unescapeCompose(beforeYaml || ""), { merge: true, prettyErrors: false, logLevel: "error" }) ?? {}) as Record<string, unknown>;
-    after = (parse(unescapeCompose(afterYaml || ""), { merge: true, prettyErrors: false, logLevel: "error" }) ?? {}) as Record<string, unknown>;
-  } catch (e) {
+    before = (parseComposeDocument(beforeYaml || "").toJS({ maxAliasCount: 100 }) ?? {}) as Record<string, unknown>;
+    after = (parseComposeDocument(afterYaml || "").toJS({ maxAliasCount: 100 }) ?? {}) as Record<string, unknown>;
+  } catch {
     return {
       changed: (beforeYaml ?? "") !== (afterYaml ?? ""),
-      parseError: e instanceof YAMLParseError ? `Invalid compose YAML (${e.code})` : "Unable to parse compose YAML",
+      parseError: "Invalid compose YAML or aliases",
     };
   }
 
   const result: ComposeDiff = { changed: false };
-  const envNames = new Set<string>();
+  const context: RedactionContext = { names: new Set(), values: new Set() };
   for (const document of [before, after]) {
     for (const service of Object.values(document.services ?? {}) as Record<string, unknown>[]) {
-      for (const name of normalizeEnv(service?.environment).keys()) envNames.add(name);
+      for (const [name, value] of normalizeEnv(service?.environment)) {
+        context.names.add(name);
+        if (value !== null && (redact === "all" || (redact === "sensitive" && isSensitiveEnvVar(name)))) {
+          context.values.add(value);
+        }
+      }
     }
   }
   for (const section of ["services", "networks", "volumes", "configs", "secrets"] as const) {
@@ -243,7 +256,7 @@ export function diffCompose(
       before[section] as Record<string, unknown> | undefined,
       after[section] as Record<string, unknown> | undefined,
       redact,
-      envNames
+      context
     );
     if (d) {
       (result as unknown as Record<string, unknown>)[section] = d;
@@ -254,7 +267,7 @@ export function diffCompose(
   const skip = new Set(["services", "networks", "volumes", "configs", "secrets"]);
   const otherBefore = Object.fromEntries(Object.entries(before).filter(([k]) => !skip.has(k)));
   const otherAfter = Object.fromEntries(Object.entries(after).filter(([k]) => !skip.has(k)));
-  const other = serviceDelta(otherBefore, otherAfter, redact, envNames);
+  const other = serviceDelta(otherBefore, otherAfter, redact, context);
   if (other) {
     result.other = other;
     result.changed = true;

@@ -1,11 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import type { RedactMode } from "../config.js";
+import { sanitizeServices } from "../sanitize.js";
 import { SwarmpitClient } from "../client.js";
 import { toolResult, toolError } from "./helpers.js";
 
 export function registerVolumeTools(
   server: McpServer,
-  client: SwarmpitClient
+  client: SwarmpitClient,
+  redact: RedactMode = "all"
 ): void {
   server.tool(
     "list_volumes",
@@ -79,7 +82,7 @@ export function registerVolumeTools(
     async ({ name }) => {
       try {
         const services = await client.getVolumeServices(name);
-        return toolResult(services);
+        return toolResult(redact === "none" ? services : sanitizeServices(services, redact === "all"));
       } catch (e) {
         return toolError(e);
       }
