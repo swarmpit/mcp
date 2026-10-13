@@ -6,9 +6,7 @@ import {
   sanitizeServices,
   sanitizeComposeYaml,
   resolveComposeEnvRefs,
-  restoreRedactedValues,
-  extractComposeEnvVars,
-  redactedComposeKeys,
+  restoreComposeRedactions,
 } from "../sanitize.js";
 import { toolResult, toolError, resolveData } from "./helpers.js";
 import { diffCompose } from "../compose-diff.js";
@@ -113,18 +111,14 @@ export function registerStackTools(
           client.getStackCompose(name).catch(() => ({ compose: "" })),
           client.getStackFile(name).catch(() => ({ compose: "" })),
         ]);
-        const restored = restoreRedactedValues(
-          restoreRedactedValues(yaml, live.compose),
-          file.compose
-        );
+        const { yaml: restored, stale, unresolved } = restoreComposeRedactions(yaml, [live.compose, file.compose]);
+        if (unresolved.length) {
+          throw new Error(
+            `Refusing to write: [REDACTED] has no live or stored value at ${unresolved.join(", ")}. ` +
+              "Use the real value, $env:VAR, or drop the key."
+          );
+        }
         const resolved = resolveComposeEnvRefs(restored);
-
-        const liveVars = extractComposeEnvVars(live.compose);
-        const fileVars = extractComposeEnvVars(file.compose);
-        const stale = redactedComposeKeys(yaml).filter((key) => {
-          const l = liveVars.get(key);
-          return l !== undefined && fileVars.has(key) && fileVars.get(key) !== l;
-        });
         const staleWarning = stale.length
           ? {
               warning:
@@ -265,7 +259,7 @@ export function registerStackTools(
         const compose = entry.spec?.compose ?? "";
 
         if (diff) {
-          const live = await client.getStackCompose(name).catch(() => ({ compose: "" }));
+          const live = await client.getStackCompose(name);
           return toolResult({
             name,
             entry: summary[index],

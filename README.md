@@ -460,9 +460,14 @@ environment:
 
 Preserved values are read from the **live service state**, not the stored stack file — the two diverge whenever a var is changed through `update_service_env` or the Swarmpit UI. If they disagree for a var being restored, `update_stack` says so in its result.
 
+Restoration is structural: each placeholder is filled from the **same service and key** (or the same path outside `services`), so two services sharing a name like `ALERT_WEBHOOK` each keep their own value. Quoted (`'[REDACTED]'`, `"[REDACTED]"`), list (`- KEY=[REDACTED]`, `- "KEY=[REDACTED]"`) and commented forms all work. A placeholder that neither the live state nor the stack file can fill makes `update_stack` refuse the write (and `dry_run` reports it) instead of shipping the literal string.
+
 ### Service specs
 
 `update_service` applies the same protection: any env var left as `[REDACTED]` is restored from the live service before the write, so a `get_service` → edit one field → `update_service` round-trip can't overwrite secrets with the placeholder. Restored names are listed in the result as `restoredVars`.
+A `[REDACTED]` variable the live service doesn't have is refused rather than written.
+
+As a last line of defence the client never sends a write request whose body contains `[REDACTED]`, whichever tool built it.
 
 ### Previewing a write
 

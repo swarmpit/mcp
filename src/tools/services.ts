@@ -106,6 +106,12 @@ export function registerServiceTools(
       try {
         const live = await client.getService(id);
         const { variables, restored } = restoreRedactedVariables(spec.variables, live.variables);
+        const unresolved = Array.isArray(variables)
+          ? variables.filter((v) => (v as { value?: unknown })?.value === "[REDACTED]").map((v) => String((v as { name?: unknown }).name))
+          : [];
+        if (unresolved.length) {
+          throw new Error(`Refusing to write: [REDACTED] has no live value for ${unresolved.join(", ")}. Use the real value or drop the variable.`);
+        }
         const payload = prepareServiceForUpdate(
           variables === undefined ? { ...spec } : { ...spec, variables }
         );

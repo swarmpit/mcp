@@ -77,6 +77,12 @@ function commentQuery(comment?: string): string {
   return comment ? `?comment=${encodeURIComponent(comment)}` : "";
 }
 
+function assertNoRedactedPlaceholder(payload: string, method: string, path: string): void {
+  if (payload.includes("[REDACTED]")) {
+    throw new Error(`Refusing to send a [REDACTED] placeholder in ${method} ${path}; restore or replace the value first.`);
+  }
+}
+
 export class SwarmpitClient {
   private baseUrl: string;
   private token: string;
@@ -99,8 +105,11 @@ export class SwarmpitClient {
       Accept: "application/json",
     };
 
-    if (body !== undefined) {
+    const payload = body !== undefined ? JSON.stringify(body) : undefined;
+    if (payload !== undefined) {
       headers["Content-Type"] = "application/json";
+      // last line of defence: a redaction placeholder must never reach a live spec
+      if (method !== "GET") assertNoRedactedPlaceholder(payload, method, path);
     }
 
     const controller = new AbortController();
@@ -110,7 +119,7 @@ export class SwarmpitClient {
       const response = await fetch(url, {
         method,
         headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: payload,
         signal: controller.signal,
       });
 
@@ -380,6 +389,7 @@ export class SwarmpitClient {
   }
 
   async createSecret(spec: { secretName: string; data: string }): Promise<void> {
+    assertNoRedactedPlaceholder(spec.data, "POST", "/api/secrets");
     // Swarmpit expects base64-encoded data
     const encoded = Buffer.from(spec.data, "utf-8").toString("base64");
     await this.request<void>("POST", "/api/secrets", { ...spec, data: encoded });
@@ -403,6 +413,7 @@ export class SwarmpitClient {
   }
 
   async createConfig(spec: { configName: string; data: string }): Promise<void> {
+    assertNoRedactedPlaceholder(spec.data, "POST", "/api/configs");
     // Swarmpit expects base64-encoded data
     const encoded = Buffer.from(spec.data, "utf-8").toString("base64");
     await this.request<void>("POST", "/api/configs", { ...spec, data: encoded });
