@@ -259,7 +259,7 @@ export function registerStackTools(
         const compose = entry.spec?.compose ?? "";
 
         if (diff) {
-          const live = await client.getStackCompose(name).catch(() => ({ compose: "" }));
+          const live = await client.getStackCompose(name);
           return toolResult({
             name,
             entry: summary[index],

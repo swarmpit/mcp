@@ -101,7 +101,7 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
 
   // Quoted list form:  - "SOME_KEY=some_value"  (previously passed through unredacted)
   return listed.replace(
-    /^(\s+-\s+)(["'])([A-Z_][A-Z0-9_]*)=(.*)\2\s*$/gm,
+    /^(\s+-\s+)(["'])([A-Z_][A-Z0-9_]*)=(.*)\2[ \t\r]*(?:#.*)?$/gm,
     (match, prefix: string, quote: string, key: string) => {
       if (redactAll || isSensitiveEnvVar(key)) {
         return `${prefix}${quote}${key}=[REDACTED]${quote}`;
@@ -219,7 +219,7 @@ function lookup(src: unknown, path: Path, key: string, listForm: boolean): unkno
 function parseSource(yaml: string): unknown {
   if (!yaml) return undefined;
   try {
-    return parse(yaml, { merge: true });
+    return parse(yaml, { merge: true, prettyErrors: false, logLevel: "error" });
   } catch {
     return undefined;
   }
@@ -241,8 +241,8 @@ export function restoreComposeRedactions(edited: string, sources: string[]): Com
   const result: ComposeRestore = { yaml: edited, restored: [], stale: [], unresolved: [] };
   if (!edited || !edited.includes("REDACTED")) return result;
 
-  const doc = parseDocument(edited, { merge: true });
-  if (doc.errors.length) throw new Error(`compose is not valid YAML: ${doc.errors[0].message}`);
+  const doc = parseDocument(edited, { merge: true, prettyErrors: false, logLevel: "error" });
+  if (doc.errors.length) throw new Error(`compose is not valid YAML (${doc.errors[0].code})`);
   const parsed = sources.map(parseSource);
 
   const found: { path: Path; key: string; listForm: boolean; set: (v: string | number | boolean) => void }[] = [];
