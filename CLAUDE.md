@@ -82,7 +82,7 @@ Three layers keep user secrets out of the conversation:
 
 1. **Response sanitization** (`sanitize.ts`)
    - `sanitizeService`: env var values replaced with `[REDACTED]`. `all` redacts all, `sensitive` matches name patterns (`pass`, `secret`, `token`, `key`, `auth`, `credential`, `private`, `dsn`, `connection.?string`) + user-provided `SWARMPIT_REDACT_PATTERNS`.
-   - `sanitizeComposeYaml`: parsed YAML-node redaction, including aliases, merges, flow collections, multiline scalars, and quoted/lowercase keys. Sanitized output omits comments; invalid YAML fails closed through `compose-yaml.ts`.
+   - `sanitizeComposeYaml`: parsed YAML-node redaction, including aliases, merges, flow collections, multiline scalars, and quoted/lowercase/aliased keys. Classify aliases before mutating their targets; refuse redaction that would also change a mapping key. Sanitized output omits comments; invalid YAML fails closed through `compose-yaml.ts`.
    - Secrets/configs `data` field zeroed unless mode is `none`.
 
 2. **`$env:` / `$file` references in tool inputs** (`helpers.ts::resolveEnvRef`, `resolveData`)
@@ -93,7 +93,7 @@ Three layers keep user secrets out of the conversation:
 3. **`[REDACTED]` round-trip on writes** (`sanitize.ts::restoreRedactedValues`, `helpers.ts::restoreRedactedVariables`)
    - `get_stack` returns compose with sensitive values as `[REDACTED]`.
    - `update_stack` restores `[REDACTED]` from `getStackCompose` (live service state) first, falling back to `getStackFile` (stored record) — the stack file goes stale the moment a var is changed via `update_service_env` or the UI. Divergence between the two is reported as a `warning` in the tool result.
-   - Live-read failures abort; only a missing stored file (HTTP 404) is tolerated. Aliases/merges are expanded before restoration so shared anchors cannot roll back a service's live credential. Redacted top-level `x-` templates are dropped after expansion, avoiding unused copies of obsolete credentials.
+   - Live-read failures abort; only a missing stored file (HTTP 404) is tolerated. Aliases/merges are expanded before restoration so shared anchors cannot roll back a service's live credential. Outside service environments, restore placeholders by YAML path, including standalone list items; unresolved values must fail previews as well as writes. Redacted top-level `x-` templates are dropped after expansion, avoiding unused copies of obsolete credentials.
    - `update_service` restores `[REDACTED]` env vars from a fresh `getService` before writing, unconditionally (not gated on redact mode). Without this, a `get_service` → edit → `update_service` round-trip writes the literal string into the container.
 
    Any new write path that accepts caller-supplied env vars must do the same — redaction only holds if every write undoes it.

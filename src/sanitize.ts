@@ -68,11 +68,12 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
   const doc = parseComposeDocument(yaml);
   const shouldRedact = (name: string) => redactAll || isSensitiveEnvVar(name);
   const resolve = (node: unknown): unknown => isAlias(node) ? node.resolve(doc) : node;
+  const redactions = new Map<Scalar, string>();
+  const mappingKeys = new Set<unknown>();
   const redactValue = (node: unknown): void => {
     const target = resolve(node);
     if (isScalar(target) && target.value !== null && target.value !== undefined) {
-      target.value = PLACEHOLDER;
-      target.type = Scalar.QUOTE_DOUBLE;
+      redactions.set(target, PLACEHOLDER);
     } else if (target && !isScalar(target) && !isPlaceholderNode(target)) {
       throw new Error("compose environment values must be scalars");
     }
@@ -84,10 +85,11 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
     seen.add(target);
     if (isMap(target)) {
       for (const pair of target.items) {
-        if (!isScalar(pair.key)) throw new Error("compose environment names must be scalar keys");
-        if (pair.key.value === "<<" || pair.key.source === "<<") {
+        const key = resolve(pair.key);
+        if (!isScalar(key)) throw new Error("compose environment names must be scalar keys");
+        if (key.value === "<<" || key.source === "<<") {
           redactEnvironment(pair.value);
-        } else if (shouldRedact(String(pair.key.value))) {
+        } else if (shouldRedact(String(key.value))) {
           redactValue(pair.value);
         }
       }
@@ -98,7 +100,9 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
           redactEnvironment(value);
         } else if (isScalar(value) && typeof value.value === "string") {
           const match = /^([^=]+)=(.*)$/s.exec(value.value);
-          if (match && shouldRedact(match[1])) value.value = `${match[1]}=${PLACEHOLDER}`;
+          if (match && shouldRedact(match[1]) && !redactions.has(value)) {
+            redactions.set(value, `${match[1]}=${PLACEHOLDER}`);
+          }
         } else {
           throw new Error("compose environment list entries must be strings");
         }
@@ -115,14 +119,22 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
     }
     if (!isMap(node)) return;
     for (const pair of node.items) {
-      if (!isScalar(pair.key) || typeof pair.key.value !== "string") continue;
-      const key = pair.key.value;
+      const keyNode = resolve(pair.key);
+      mappingKeys.add(keyNode);
+      if (!isScalar(keyNode) || typeof keyNode.value !== "string") continue;
+      const key = keyNode.value;
       if (key === "environment") redactEnvironment(pair.value);
       else if (/^[A-Z_][A-Z0-9_]*$/.test(key) && shouldRedact(key) && isScalar(resolve(pair.value))) {
         redactValue(pair.value);
       }
     }
   });
+  // classify every alias before changing scalars that may also name fields.
+  for (const [node, value] of redactions) {
+    if (mappingKeys.has(node)) throw new Error("compose cannot redact an anchor shared with a mapping key");
+    node.value = value;
+    if (value === PLACEHOLDER) node.type = Scalar.QUOTE_DOUBLE;
+  }
   doc.comment = null;
   doc.commentBefore = null;
   return doc.toString({ lineWidth: 0 });
@@ -232,14 +244,17 @@ export function restoreComposeRedactions(edited: string, sources: string[]): Com
   if (!edited || !edited.includes("REDACTED")) return result;
 
   const doc = parseComposeDocument(edited);
+  const normalizePlaceholder = (node: unknown) => {
+    if (!isSeq(node) || !isPlaceholderNode(node)) return undefined;
+    const replacement = doc.createNode(PLACEHOLDER);
+    replacement.anchor = node.anchor;
+    return replacement;
+  };
   walkYaml(doc.contents, (node) => {
-    if (!isMap(node)) return;
-    for (const pair of node.items) {
-      if (isSeq(pair.value) && isPlaceholderNode(pair.value)) {
-        const replacement = doc.createNode(PLACEHOLDER);
-        replacement.anchor = pair.value.anchor;
-        pair.value = replacement;
-      }
+    if (isMap(node)) {
+      for (const pair of node.items) pair.value = normalizePlaceholder(pair.value) ?? pair.value;
+    } else if (isSeq(node)) {
+      node.items = node.items.map((item) => normalizePlaceholder(item) ?? item);
     }
   });
   // each service must restore its own live value, even when the input shares an anchor.
@@ -280,6 +295,10 @@ export function restoreComposeRedactions(edited: string, sources: string[]): Com
     } else if (isSeq(node)) {
       node.items.forEach((item, i) => {
         const p = [...path, i];
+        if (isPlaceholderNode(item)) {
+          found.push({ path: p, key: String(i), listForm: false, set: (v) => { node.items[i] = doc.createNode(v); } });
+          return;
+        }
         if (isScalar(item) && typeof item.value === "string") {
           const m = LIST_PLACEHOLDER.exec(item.value);
           if (m) {
