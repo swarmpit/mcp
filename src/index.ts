@@ -40,7 +40,7 @@ async function main() {
 
   const server = new McpServer({
     name: "mcp-swarmpit",
-    version: "0.1.0",
+    version: "0.2.0",
   });
 
   registerAllTools(server, config);
