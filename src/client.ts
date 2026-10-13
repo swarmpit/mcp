@@ -64,6 +64,25 @@ export function formatSpecError(body: string): string | undefined {
   return `Swarmpit rejected the request body:\n${lines.join("\n")}`;
 }
 
+export interface StackHistoryEntry {
+  at: string;
+  by: string;
+  comment?: string;
+  trigger?: { kind?: string; service?: string; digest?: string };
+  spec?: { compose?: string };
+}
+
+/** Older Swarmpit builds ignore the unknown query param rather than failing. */
+function commentQuery(comment?: string): string {
+  return comment ? `?comment=${encodeURIComponent(comment)}` : "";
+}
+
+function assertNoRedactedPlaceholder(payload: string, method: string, path: string): void {
+  if (payload.includes("[REDACTED]")) {
+    throw new Error(`Refusing to send a [REDACTED] placeholder in ${method} ${path}; restore or replace the value first.`);
+  }
+}
+
 export class SwarmpitClient {
   private baseUrl: string;
   private token: string;
@@ -86,8 +105,11 @@ export class SwarmpitClient {
       Accept: "application/json",
     };
 
-    if (body !== undefined) {
+    const payload = body !== undefined ? JSON.stringify(body) : undefined;
+    if (payload !== undefined) {
       headers["Content-Type"] = "application/json";
+      // last line of defence: a redaction placeholder must never reach a live spec
+      if (method !== "GET") assertNoRedactedPlaceholder(payload, method, path);
     }
 
     const controller = new AbortController();
@@ -97,7 +119,7 @@ export class SwarmpitClient {
       const response = await fetch(url, {
         method,
         headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: payload,
         signal: controller.signal,
       });
 
@@ -203,23 +225,39 @@ export class SwarmpitClient {
     return { compose };
   }
 
-  async createStack(spec: { name: string; spec: { compose: string } }): Promise<void> {
-    await this.request<void>("POST", "/api/stacks", spec);
+  async createStack(
+    spec: { name: string; spec: { compose: string } },
+    comment?: string
+  ): Promise<void> {
+    await this.request<void>("POST", `/api/stacks${commentQuery(comment)}`, spec);
   }
 
-  async updateStack(name: string, compose: string): Promise<void> {
-    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}`, {
-      name,
-      spec: { compose },
-    });
+  async updateStack(name: string, compose: string, comment?: string): Promise<void> {
+    await this.request<void>(
+      "POST",
+      `/api/stacks/${encodeURIComponent(name)}${commentQuery(comment)}`,
+      { name, spec: { compose } }
+    );
   }
 
-  async redeployStack(name: string): Promise<void> {
-    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/redeploy`);
+  async redeployStack(name: string, comment?: string): Promise<void> {
+    await this.request<void>(
+      "POST",
+      `/api/stacks/${encodeURIComponent(name)}/redeploy${commentQuery(comment)}`
+    );
   }
 
-  async rollbackStack(name: string): Promise<void> {
-    await this.request<void>("POST", `/api/stacks/${encodeURIComponent(name)}/rollback`);
+  async rollbackStack(name: string, comment?: string): Promise<void> {
+    await this.request<void>(
+      "POST",
+      `/api/stacks/${encodeURIComponent(name)}/rollback${commentQuery(comment)}`
+    );
+  }
+
+  async getStackHistory(name: string): Promise<StackHistoryEntry[]> {
+    return this.request<StackHistoryEntry[]>(
+      "GET", `/api/stacks/${encodeURIComponent(name)}/history`
+    );
   }
 
   async deactivateStack(name: string): Promise<void> {
@@ -351,6 +389,7 @@ export class SwarmpitClient {
   }
 
   async createSecret(spec: { secretName: string; data: string }): Promise<void> {
+    assertNoRedactedPlaceholder(spec.data, "POST", "/api/secrets");
     // Swarmpit expects base64-encoded data
     const encoded = Buffer.from(spec.data, "utf-8").toString("base64");
     await this.request<void>("POST", "/api/secrets", { ...spec, data: encoded });
@@ -374,6 +413,7 @@ export class SwarmpitClient {
   }
 
   async createConfig(spec: { configName: string; data: string }): Promise<void> {
+    assertNoRedactedPlaceholder(spec.data, "POST", "/api/configs");
     // Swarmpit expects base64-encoded data
     const encoded = Buffer.from(spec.data, "utf-8").toString("base64");
     await this.request<void>("POST", "/api/configs", { ...spec, data: encoded });
