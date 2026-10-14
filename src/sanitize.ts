@@ -1,4 +1,4 @@
-import { isAlias, isMap, isNode, isScalar, isSeq, Scalar } from "yaml";
+import { isAlias, isMap, isNode, isScalar, isSeq, Scalar, type Pair } from "yaml";
 import { parseComposeDocument, walkYaml } from "./compose-yaml.js";
 import type { SwarmpitService, SwarmpitEnvVar } from "./types.js";
 
@@ -70,6 +70,33 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
   const resolve = (node: unknown): unknown => isAlias(node) ? node.resolve(doc) : node;
   const redactions = new Map<Scalar, string>();
   const mappingKeys = new Set<unknown>();
+  const envUses = new Map<Scalar, { value: string; apply: () => void }[]>();
+  const recordEnvUse = (target: Scalar, source: unknown, value: string, set: (copy: Scalar) => void): void => {
+    const uses = envUses.get(target) ?? [];
+    uses.push({ value, apply: () => {
+      const copy = doc.createNode(value);
+      if (isScalar(source)) copy.anchor = source.anchor;
+      set(copy);
+    } });
+    envUses.set(target, uses);
+  };
+  const forEachMapping = (node: unknown, visit: (pair: Pair) => void, visited = new Set<unknown>()): void => {
+    const target = resolve(node);
+    if (visited.has(target)) return;
+    visited.add(target);
+    if (isSeq(target)) {
+      for (const item of target.items) forEachMapping(item, visit, visited);
+    } else if (isMap(target)) {
+      for (const pair of target.items) {
+        const key = resolve(pair.key);
+        if (isScalar(key) && (key.value === "<<" || key.source === "<<")) {
+          forEachMapping(pair.value, visit, visited);
+        } else {
+          visit(pair);
+        }
+      }
+    }
+  };
   const redactValue = (node: unknown): void => {
     const target = resolve(node);
     if (isScalar(target) && target.value !== null && target.value !== undefined) {
@@ -89,19 +116,25 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
         if (!isScalar(key)) throw new Error("compose environment names must be scalar keys");
         if (key.value === "<<" || key.source === "<<") {
           redactEnvironment(pair.value);
-        } else if (shouldRedact(String(key.value))) {
-          redactValue(pair.value);
+        } else {
+          if (shouldRedact(String(key.value))) redactValue(pair.value);
+          const value = resolve(pair.value);
+          if (isScalar(value) && value.value !== null && value.value !== undefined) {
+            recordEnvUse(value, pair.value, PLACEHOLDER, (copy) => { pair.value = copy; });
+          }
         }
       }
     } else if (isSeq(target)) {
-      for (const item of target.items) {
+      for (const [i, item] of target.items.entries()) {
         const value = resolve(item);
         if (isMap(value) || isSeq(value)) {
           redactEnvironment(value);
         } else if (isScalar(value) && typeof value.value === "string") {
           const match = /^([^=]+)=(.*)$/s.exec(value.value);
-          if (match && shouldRedact(match[1]) && !redactions.has(value)) {
-            redactions.set(value, `${match[1]}=${PLACEHOLDER}`);
+          if (match) {
+            const replacement = `${match[1]}=${PLACEHOLDER}`;
+            if (shouldRedact(match[1]) && !redactions.has(value)) redactions.set(value, replacement);
+            recordEnvUse(value, item, replacement, (copy) => { target.items[i] = copy; });
           }
         } else {
           throw new Error("compose environment list entries must be strings");
@@ -111,6 +144,25 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
       throw new Error("compose environment must be a map or list");
     }
   };
+
+  const serviceField = (pair: Pair): void => {
+    const key = resolve(pair.key);
+    if (isScalar(key) && key.value === "environment") redactEnvironment(pair.value);
+  };
+  forEachMapping(doc.contents, (pair) => {
+    const key = resolve(pair.key);
+    if (!isScalar(key) || typeof key.value !== "string") return;
+    if (key.value === "services") {
+      forEachMapping(pair.value, (service) => forEachMapping(service.value, serviceField));
+    } else if (key.value.startsWith("x-")) {
+      forEachMapping(pair.value, (field) => {
+        const value = resolve(field.value);
+        if (isMap(value) || isSeq(value)) serviceField(field);
+      });
+    } else if (key.value === "environment") {
+      serviceField(pair);
+    }
+  });
 
   walkYaml(doc.contents, (node) => {
     if (isNode(node)) {
@@ -123,8 +175,7 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
       mappingKeys.add(keyNode);
       if (!isScalar(keyNode) || typeof keyNode.value !== "string") continue;
       const key = keyNode.value;
-      if (key === "environment") redactEnvironment(pair.value);
-      else if (/^[A-Z_][A-Z0-9_]*$/.test(key) && shouldRedact(key) && isScalar(resolve(pair.value))) {
+      if (/^[A-Z_][A-Z0-9_]*$/.test(key) && shouldRedact(key) && isScalar(resolve(pair.value))) {
         redactValue(pair.value);
       }
     }
@@ -134,6 +185,12 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
     if (mappingKeys.has(node)) throw new Error("compose cannot redact an anchor shared with a mapping key");
     node.value = value;
     if (value === PLACEHOLDER) node.type = Scalar.QUOTE_DOUBLE;
+  }
+  // one anchor may be a whole map value and a NAME=value list entry.
+  for (const [node, uses] of envUses) {
+    if (redactions.has(node) && uses.some(({ value }) => value !== redactions.get(node))) {
+      for (const use of uses) use.apply();
+    }
   }
   doc.comment = null;
   doc.commentBefore = null;
@@ -211,9 +268,44 @@ function usable(v: unknown): v is string | number | boolean {
   return (typeof v === "string" || typeof v === "number" || typeof v === "boolean") && !String(v).includes(PLACEHOLDER);
 }
 
+function isServiceEnvironment(path: Path): boolean {
+  return path[0] === "services" && path[2] === "environment" && path.length === 4;
+}
+
+function matchesRestorationShape(edited: unknown, source: unknown): boolean {
+  if (edited === PLACEHOLDER) return usable(source);
+  if (typeof edited === "string") {
+    const match = LIST_PLACEHOLDER.exec(edited);
+    if (match) return typeof source === "string" && source.startsWith(`${match[1]}=`) && usable(source);
+  }
+  if (Array.isArray(edited)) {
+    return Array.isArray(source) && edited.length === source.length
+      && edited.every((value, i) => matchesRestorationShape(value, source[i]));
+  }
+  if (edited && source && typeof edited === "object" && typeof source === "object" && !Array.isArray(source)) {
+    const keys = Object.keys(edited);
+    return keys.length === Object.keys(source).length && keys.every((key) =>
+      Object.hasOwn(source, key) && matchesRestorationShape(
+        (edited as Record<string, unknown>)[key], (source as Record<string, unknown>)[key]
+      )
+    );
+  }
+  return Object.is(edited, source);
+}
+
+function hasStableListContext(edited: unknown, sources: unknown[], path: Path, listForm: boolean): boolean {
+  if (isServiceEnvironment(path) || (path.length === 1 && listForm)) return true;
+  return path.every((key, i) => {
+    if (typeof key !== "number") return true;
+    const parent = path.slice(0, i);
+    const source = sources.map((candidate) => getIn(candidate, parent)).find((value) => value !== undefined);
+    return matchesRestorationShape(getIn(edited, parent), source);
+  });
+}
+
 function lookup(src: unknown, path: Path, key: string, listForm: boolean): unknown {
   // service env: match by name within the same service, whichever form either side uses
-  if (path[0] === "services" && path[2] === "environment" && path.length === 4) {
+  if (isServiceEnvironment(path)) {
     return envValue(getIn(src, ["services", path[1], "environment"]), key);
   }
   if (!listForm) return getIn(src, path);
@@ -275,6 +367,7 @@ export function restoreComposeRedactions(edited: string, sources: string[]): Com
     }
   }
   const parsed = sources.map(parseSource);
+  const editedSpec = doc.toJS({ maxAliasCount: 100 });
 
   const found: { path: Path; key: string; listForm: boolean; set: (v: string | number | boolean) => void }[] = [];
   const walk = (node: unknown, path: Path): void => {
@@ -314,6 +407,10 @@ export function restoreComposeRedactions(edited: string, sources: string[]): Com
 
   for (const f of found) {
     const where = f.listForm ? [...f.path.slice(0, -1), f.key].join(".") : f.path.join(".");
+    if (!hasStableListContext(editedSpec, parsed, f.path, f.listForm)) {
+      result.unresolved.push(where);
+      continue;
+    }
     const values = parsed.map((src) => lookup(src, f.path, f.key, f.listForm));
     const first = values.findIndex(usable);
     if (first === -1) {

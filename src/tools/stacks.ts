@@ -120,8 +120,8 @@ export function registerStackTools(
         const { yaml: restored, stale, unresolved } = restoreComposeRedactions(yaml, [live.compose, file.compose]);
         if (unresolved.length) {
           throw new Error(
-            `Refusing to write: [REDACTED] has no live or stored value at ${unresolved.join(", ")}. ` +
-              "Use the real value, $env:VAR, or drop the key."
+            `Refusing to write: [REDACTED] has no unambiguous live or stored value at ${unresolved.join(", ")}. ` +
+              "For changed lists, replace all placeholders with explicit values or $env:VAR; otherwise supply or drop the missing key."
           );
         }
         const resolved = resolveComposeEnvRefs(restored);
