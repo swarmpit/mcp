@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { parse } from "yaml";
 import { writeFileSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -172,7 +173,7 @@ describe("$file integration", () => {
 
     assert.equal(result.isError, undefined);
     const [arg] = client.calls.createStack[0] as [{ spec: { compose: string } }];
-    assert.ok(arg.spec.compose.includes("SECRET: resolved-value"));
+    assert.equal(parse(arg.spec.compose).services.app.environment.SECRET, "resolved-value");
     delete process.env.TEST_STACK_FILE_VAR;
   });
 

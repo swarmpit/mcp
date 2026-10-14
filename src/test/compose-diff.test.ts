@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { diffCompose, unescapeCompose } from "../compose-diff.js";
+import { diffCompose } from "../compose-diff.js";
 
 const base = `version: "3.8"
 services:
@@ -65,11 +65,10 @@ version: "3.8"
     assert.equal(diffCompose(base, reordered).changed, false);
   });
 
-  it("treats $$ escaping as equivalent to $", () => {
+  it("distinguishes literal dollars from interpolation", () => {
     const escaped = 'services:\n  web:\n    command: echo $$HOME\n';
     const plain = 'services:\n  web:\n    command: echo $HOME\n';
-    assert.equal(diffCompose(escaped, plain).changed, false);
-    assert.equal(unescapeCompose("$$FOO"), "$FOO");
+    assert.equal(diffCompose(escaped, plain).changed, true);
   });
 
   it("diffs list entries as added/removed rather than whole-list replacement", () => {

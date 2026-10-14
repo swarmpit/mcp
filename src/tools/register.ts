@@ -28,10 +28,10 @@ export function registerAllTools(
 
   registerServiceTools(scoped, client, redact);
   registerStackTools(scoped, client, redact);
-  registerNetworkTools(scoped, client);
+  registerNetworkTools(scoped, client, redact);
   registerNodeTools(scoped, client);
   registerTaskTools(scoped, client);
-  registerVolumeTools(scoped, client);
+  registerVolumeTools(scoped, client, redact);
   registerSecretTools(scoped, client, redact);
   registerConfigTools(scoped, client, redact);
   registerAdminTools(scoped, client, redact);

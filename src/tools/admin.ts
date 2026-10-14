@@ -84,17 +84,27 @@ export function registerAdminTools(
 
   server.tool(
     "edit_user",
-    "Edit a Swarmpit user (admin). A password in spec may be { $env: VAR_NAME } or { $file: /path }.",
+    "Edit a Swarmpit user's role or email (admin). Password changes are not supported by this API.",
     {
       id: z.string().describe("User ID"),
-      spec: z.record(z.unknown()).describe("User fields to update (role, email, etc.)"),
+      spec: z.object({
+        role: z.enum(["admin", "user"]).optional(),
+        email: z.string().optional(),
+      }).strict().describe("Role and/or email to update; password changes are not supported"),
     },
     async ({ id, spec }) => {
       try {
-        const payload =
-          spec.password === undefined
-            ? spec
-            : { ...spec, password: resolveData(spec.password) };
+        if (!Object.keys(spec).length || Object.keys(spec).some((key) => key !== "role" && key !== "email")) {
+          throw new Error("Only role and email can be edited; password changes are not supported by this API");
+        }
+        const current = await client.getUser(id);
+        const payload: Record<string, unknown> = {};
+        for (const key of ["_id", "_rev", "type", "username", "role"]) {
+          if (typeof current[key] !== "string") throw new Error("User record is missing required update metadata");
+          payload[key] = current[key];
+        }
+        if (typeof current.email === "string") payload.email = current.email;
+        Object.assign(payload, spec);
         await client.editUser(id, payload);
         return toolResult({ updated: true, id });
       } catch (e) {

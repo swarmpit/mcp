@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RedactMode } from "../config.js";
+import { sanitizeServices } from "../sanitize.js";
 import { SwarmpitClient } from "../client.js";
 import { toolResult, toolError, resolveData } from "./helpers.js";
 
@@ -92,7 +93,7 @@ export function registerSecretTools(
     async ({ id }) => {
       try {
         const services = await client.getSecretServices(id);
-        return toolResult(services);
+        return toolResult(redact === "none" ? services : sanitizeServices(services, redact === "all"));
       } catch (e) {
         return toolError(e);
       }

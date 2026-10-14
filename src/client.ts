@@ -1,3 +1,4 @@
+import { STATUS_CODES } from "node:http";
 import type {
   SwarmpitService,
   SwarmpitStack,
@@ -31,6 +32,17 @@ const SPEC_PREDICATES: Record<string, string> = {
   "clojure.core/set?": "a set",
 };
 
+const SPEC_FIELDS = new Set([
+  "serviceName", "mode", "replicas", "version", "repository", "name", "tag", "labels",
+  "variables", "value", "mounts", "type", "containerPath", "host", "readOnly", "volumeOptions",
+  "driver", "options", "networks", "ports", "containerPort", "hostPort", "protocol", "logdriver",
+  "opts", "resources", "reservation", "limit", "cpu", "memory", "deployment", "maxReplicas",
+  "parallelism", "delay", "order", "failureAction", "restartPolicy", "condition", "attempts",
+  "window", "update", "rollback", "placement", "rule", "autoredeploy", "configs", "configName",
+  "configTarget", "secrets", "secretName", "secretTarget", "data", "username", "role", "email",
+  "password", "_id", "_rev", "spec", "compose",
+]);
+
 interface SpecProblem {
   path?: unknown[];
   pred?: string;
@@ -40,7 +52,7 @@ interface SpecProblem {
 /**
  * Turn a reitit/clojure.spec coercion failure into something actionable.
  * The raw body is a nested blob of `problems`; what the caller needs is
- * "this field, this expected type, this is what you sent".
+ * "this field, this expected type", never rejected request values.
  */
 export function formatSpecError(body: string): string | undefined {
   let parsed: { problems?: SpecProblem[]; type?: string };
@@ -52,10 +64,13 @@ export function formatSpecError(body: string): string | undefined {
   if (!Array.isArray(parsed?.problems) || parsed.problems.length === 0) return undefined;
 
   const lines = parsed.problems.slice(0, 10).map((p) => {
-    const field = Array.isArray(p.path) && p.path.length ? p.path.join(".") : "(request body)";
-    const expected = (p.pred && SPEC_PREDICATES[p.pred]) ?? p.pred ?? "a valid value";
-    const got = p.val === undefined ? "nothing" : JSON.stringify(p.val);
-    return `  ${field} must be ${expected}, got ${got}`;
+    const field = Array.isArray(p?.path) && p.path.length && p.path.every((part) =>
+      (typeof part === "string" && SPEC_FIELDS.has(part)) ||
+      (typeof part === "number" && Number.isSafeInteger(part) && part >= 0)
+    ) ? p.path.join(".") : "(request body)";
+    const expected = typeof p?.pred === "string" && Object.hasOwn(SPEC_PREDICATES, p.pred)
+      ? SPEC_PREDICATES[p.pred] : "a valid value";
+    return `  ${field} must be ${expected}`;
   });
   if (parsed.problems.length > lines.length) {
     lines.push(`  …and ${parsed.problems.length - lines.length} more`);
@@ -128,26 +143,30 @@ export class SwarmpitClient {
         if (response.status === 401) {
           throw new SwarmpitApiError(
             401,
-            response.statusText,
-            text || "Unauthorized — token invalid, expired, or lacks permission for this operation"
+            "Unauthorized",
+            "Token invalid, expired, or lacks permission for this operation"
           );
         }
         throw new SwarmpitApiError(
           response.status,
-          response.statusText,
-          formatSpecError(text) ?? text
+          STATUS_CODES[response.status] ?? "Request failed",
+          formatSpecError(text) ?? "Request rejected; response details withheld to protect credentials"
         );
       }
 
       const text = await response.text();
       if (!text) return undefined as T;
-      return JSON.parse(text) as T;
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        throw new SwarmpitApiError(response.status, "Invalid response", "Expected valid JSON; response details withheld");
+      }
     } catch (err) {
       if (err instanceof SwarmpitApiError) throw err;
       if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`Swarmpit API request timed out after ${this.timeout}ms: ${method} ${path}`);
       }
-      throw err;
+      throw new Error("Swarmpit API request failed; check connectivity and server logs locally");
     } finally {
       clearTimeout(timer);
     }

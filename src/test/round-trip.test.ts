@@ -181,8 +181,7 @@ describe("admin password references (#6)", () => {
     delete process.env.TEST_NEW_USER_PASS;
   });
 
-  it("edit_user resolves a password reference in spec", async () => {
-    process.env.TEST_EDIT_USER_PASS = "rotated";
+  it("edit_user refuses unsupported password changes before resolving references", async () => {
     const edits: unknown[][] = [];
     const client = {
       editUser: (...args: unknown[]) => {
@@ -193,11 +192,10 @@ describe("admin password references (#6)", () => {
     const server = mockServer();
     registerAdminTools(server as never, client as never, "all");
 
-    await server.handlers.edit_user({ id: "u1", spec: { password: { $env: "TEST_EDIT_USER_PASS" } } });
-
-    const [, spec] = edits[0] as [string, { password: string }];
-    assert.equal(spec.password, "rotated");
-    delete process.env.TEST_EDIT_USER_PASS;
+    const result = await server.handlers.edit_user({ id: "u1", spec: { password: { $env: "TEST_EDIT_USER_PASS" } } });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /password changes are not supported/);
+    assert.deepEqual(edits, []);
   });
 
   it("create_user errors on an unset $env reference without calling the API", async () => {

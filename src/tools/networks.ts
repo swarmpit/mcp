@@ -1,11 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import type { RedactMode } from "../config.js";
+import { sanitizeServices } from "../sanitize.js";
 import { SwarmpitClient } from "../client.js";
 import { toolResult, toolError } from "./helpers.js";
 
 export function registerNetworkTools(
   server: McpServer,
-  client: SwarmpitClient
+  client: SwarmpitClient,
+  redact: RedactMode = "all"
 ): void {
   server.tool(
     "list_networks",
@@ -90,7 +93,7 @@ export function registerNetworkTools(
     async ({ id }) => {
       try {
         const services = await client.getNetworkServices(id);
-        return toolResult(services);
+        return toolResult(redact === "none" ? services : sanitizeServices(services, redact === "all"));
       } catch (e) {
         return toolError(e);
       }

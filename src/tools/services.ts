@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RedactMode } from "../config.js";
 import { SwarmpitClient } from "../client.js";
-import { sanitizeService, sanitizeServices } from "../sanitize.js";
+import { sanitizeService, sanitizeServices, sanitizeComposeYaml } from "../sanitize.js";
 import { filterLogs } from "../timeseries.js";
 import {
   toolResult,
@@ -285,8 +285,9 @@ export function registerServiceTools(
     },
     async ({ id, names }) => {
       try {
-        const service = await client.getService(id);
-        const found: Record<string, string | null> = {};
+        const raw = await client.getService(id);
+        const service = redact === "none" ? raw : sanitizeService(raw, redact === "all");
+        const found: Record<string, string | null> = Object.create(null);
         for (const name of names) {
           const v = service.variables?.find((v) => v.name === name);
           found[name] = v?.value ?? null;
@@ -305,7 +306,9 @@ export function registerServiceTools(
     async ({ id }) => {
       try {
         const compose = await client.getServiceCompose(id);
-        return toolResult(compose);
+        return toolResult(redact === "none" ? compose : {
+          compose: sanitizeComposeYaml(compose.compose, redact === "all"),
+        });
       } catch (e) {
         return toolError(e);
       }

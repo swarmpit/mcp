@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RedactMode } from "../config.js";
-import { SwarmpitClient } from "../client.js";
+import { SwarmpitApiError, SwarmpitClient } from "../client.js";
 import {
   sanitizeServices,
   sanitizeComposeYaml,
@@ -23,7 +23,10 @@ export function registerStackTools(
     async () => {
       try {
         const stacks = await client.listStacks();
-        return toolResult(stacks);
+        return toolResult(redact === "none" ? stacks : stacks.map((stack) => ({
+          ...stack,
+          services: sanitizeServices(stack.services ?? [], redact === "all"),
+        })));
       } catch (e) {
         return toolError(e);
       }
@@ -108,17 +111,21 @@ export function registerStackTools(
         // Live service state is the source of truth — the stored stack file goes
         // stale whenever a var is changed via update_service_env or the UI.
         const [live, file] = await Promise.all([
-          client.getStackCompose(name).catch(() => ({ compose: "" })),
-          client.getStackFile(name).catch(() => ({ compose: "" })),
+          client.getStackCompose(name),
+          client.getStackFile(name).catch((error: unknown) => {
+            if (error instanceof SwarmpitApiError && error.status === 404) return { compose: "" };
+            throw error;
+          }),
         ]);
         const { yaml: restored, stale, unresolved } = restoreComposeRedactions(yaml, [live.compose, file.compose]);
         if (unresolved.length) {
           throw new Error(
-            `Refusing to write: [REDACTED] has no live or stored value at ${unresolved.join(", ")}. ` +
-              "Use the real value, $env:VAR, or drop the key."
+            `Refusing to write: [REDACTED] has no unambiguous live or stored value at ${unresolved.join(", ")}. ` +
+              "For changed lists, replace all placeholders with explicit values or $env:VAR; otherwise supply or drop the missing key."
           );
         }
-        const resolved = resolveComposeEnvRefs(restored);
+        const sensitiveValues = new Set<string>();
+        const resolved = resolveComposeEnvRefs(restored, sensitiveValues);
         const staleWarning = stale.length
           ? {
               warning:
@@ -132,7 +139,7 @@ export function registerStackTools(
           return toolResult({
             dryRun: true,
             name,
-            changes: diffCompose(live.compose, resolved, { redact }),
+            changes: diffCompose(live.compose, resolved, { redact, sensitiveValues }),
             ...staleWarning,
           });
         }
