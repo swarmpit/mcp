@@ -4,6 +4,7 @@ import { isSensitiveEnvVar } from "./sanitize.js";
 
 export interface ComposeDiffOptions {
   redact?: RedactMode;
+  sensitiveValues?: ReadonlySet<string>;
 }
 
 interface ListDelta {
@@ -240,7 +241,7 @@ export function diffCompose(
   }
 
   const result: ComposeDiff = { changed: false };
-  const context: RedactionContext = { names: new Set(), values: new Set() };
+  const context: RedactionContext = { names: new Set(), values: new Set(options.sensitiveValues) };
   for (const document of [before, after]) {
     for (const service of Object.values(document.services ?? {}) as Record<string, unknown>[]) {
       for (const [name, value] of normalizeEnv(service?.environment)) {

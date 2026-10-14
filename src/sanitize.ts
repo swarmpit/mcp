@@ -1,5 +1,5 @@
 import { isAlias, isMap, isNode, isScalar, isSeq, Scalar, type Pair } from "yaml";
-import { parseComposeDocument, walkYaml } from "./compose-yaml.js";
+import { mappingKeyTargets, parseComposeDocument, walkYaml } from "./compose-yaml.js";
 import type { SwarmpitService, SwarmpitEnvVar } from "./types.js";
 
 const DEFAULT_SENSITIVE_PATTERNS: RegExp[] = [
@@ -69,7 +69,7 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
   const shouldRedact = (name: string) => redactAll || isSensitiveEnvVar(name);
   const resolve = (node: unknown): unknown => isAlias(node) ? node.resolve(doc) : node;
   const redactions = new Map<Scalar, string>();
-  const mappingKeys = new Set<unknown>();
+  const mappingKeys = mappingKeyTargets(doc);
   const envUses = new Map<Scalar, { value: string; apply: () => void }[]>();
   const recordEnvUse = (target: Scalar, source: unknown, value: string, set: (copy: Scalar) => void): void => {
     const uses = envUses.get(target) ?? [];
@@ -149,16 +149,30 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
     const key = resolve(pair.key);
     if (isScalar(key) && key.value === "environment") redactEnvironment(pair.value);
   };
+  const templateSeen = new Set<unknown>();
+  const scanTemplates = (node: unknown): void => {
+    const target = resolve(node);
+    if (templateSeen.has(target)) return;
+    templateSeen.add(target);
+    if (isSeq(target)) {
+      for (const item of target.items) scanTemplates(item);
+    } else if (isMap(target)) {
+      forEachMapping(target, (pair) => {
+        const key = resolve(pair.key);
+        const value = resolve(pair.value);
+        if (isScalar(key) && key.value === "environment" && (isMap(value) || isSeq(value))) {
+          redactEnvironment(value);
+        } else {
+          scanTemplates(value);
+        }
+      });
+    }
+  };
   forEachMapping(doc.contents, (pair) => {
     const key = resolve(pair.key);
     if (!isScalar(key) || typeof key.value !== "string") return;
     if (key.value === "services") {
       forEachMapping(pair.value, (service) => forEachMapping(service.value, serviceField));
-    } else if (key.value.startsWith("x-")) {
-      forEachMapping(pair.value, (field) => {
-        const value = resolve(field.value);
-        if (isMap(value) || isSeq(value)) serviceField(field);
-      });
     } else if (key.value === "environment") {
       serviceField(pair);
     }
@@ -172,9 +186,9 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
     if (!isMap(node)) return;
     for (const pair of node.items) {
       const keyNode = resolve(pair.key);
-      mappingKeys.add(keyNode);
       if (!isScalar(keyNode) || typeof keyNode.value !== "string") continue;
       const key = keyNode.value;
+      if (key.startsWith("x-")) scanTemplates(pair.value);
       if (/^[A-Z_][A-Z0-9_]*$/.test(key) && shouldRedact(key) && isScalar(resolve(pair.value))) {
         redactValue(pair.value);
       }
@@ -184,6 +198,8 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
   for (const [node, value] of redactions) {
     if (mappingKeys.has(node)) throw new Error("compose cannot redact an anchor shared with a mapping key");
     node.value = value;
+    node.tag = undefined;
+    node.format = undefined;
     if (value === PLACEHOLDER) node.type = Scalar.QUOTE_DOUBLE;
   }
   // one anchor may be a whole map value and a NAME=value list entry.
@@ -197,19 +213,39 @@ export function sanitizeComposeYaml(yaml: string, redactAll = true): string {
   return doc.toString({ lineWidth: 0 });
 }
 
-export function resolveComposeEnvRefs(yaml: string): string {
+export function resolveComposeEnvRefs(yaml: string, resolvedValues?: Set<string>): string {
   const reference = /(?<!\$)(?:\$\$)*\$env:/;
   if (!reference.test(yaml)) return yaml;
   const doc = parseComposeDocument(yaml);
+  const mappingKeys = mappingKeyTargets(doc);
+  const environmentEntries = new Set<unknown>();
+  const resolve = (node: unknown): unknown => isAlias(node) ? node.resolve(doc) : node;
+  walkYaml(doc.contents, (node) => {
+    if (!isMap(node)) return;
+    for (const pair of node.items) {
+      const key = resolve(pair.key);
+      const value = resolve(pair.value);
+      if (isScalar(key) && key.value === "environment" && isSeq(value)) {
+        for (const item of value.items) environmentEntries.add(resolve(item));
+      }
+    }
+  });
   let changed = false;
   walkYaml(doc.contents, (node, key) => {
     if (!isScalar(node) || typeof node.value !== "string" || !reference.test(node.value)) return;
     const match = /^(?:([A-Za-z_][A-Za-z0-9_.-]*=))?\$env:([A-Za-z_][A-Za-z0-9_]*)$/.exec(node.value);
-    if (key || !match) throw new Error("Unsupported $env reference: use a complete value or KEY=$env:VAR_NAME");
+    if (key || mappingKeys.has(node)) throw new Error("Unsupported $env reference in a mapping key or its alias");
+    if (!match) throw new Error("Unsupported $env reference: use a complete value or KEY=$env:VAR_NAME");
+    if (!match[1] && environmentEntries.has(node)) {
+      throw new Error("Unsupported $env reference defining an environment name: use KEY=$env:VAR_NAME");
+    }
     const value = process.env[match[2]];
     if (value === undefined) throw new Error(`$env:${match[2]} referenced in compose but not set in environment`);
     // locally resolved credentials must not be interpolated again by Docker.
-    node.value = `${match[1] ?? ""}${value.replace(/\$/g, () => "$$")}`;
+    const escaped = value.replace(/\$/g, () => "$$");
+    resolvedValues?.add(value);
+    resolvedValues?.add(escaped);
+    node.value = `${match[1] ?? ""}${escaped}`;
     node.type = Scalar.QUOTE_DOUBLE;
     changed = true;
   });

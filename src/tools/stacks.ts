@@ -124,7 +124,8 @@ export function registerStackTools(
               "For changed lists, replace all placeholders with explicit values or $env:VAR; otherwise supply or drop the missing key."
           );
         }
-        const resolved = resolveComposeEnvRefs(restored);
+        const sensitiveValues = new Set<string>();
+        const resolved = resolveComposeEnvRefs(restored, sensitiveValues);
         const staleWarning = stale.length
           ? {
               warning:
@@ -138,7 +139,7 @@ export function registerStackTools(
           return toolResult({
             dryRun: true,
             name,
-            changes: diffCompose(live.compose, resolved, { redact }),
+            changes: diffCompose(live.compose, resolved, { redact, sensitiveValues }),
             ...staleWarning,
           });
         }

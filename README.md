@@ -168,7 +168,7 @@ A single-instance setup is unchanged in every respect: `SWARMPIT_URL` + `SWARMPI
 
 User records never contain a password hash (the Swarmpit server strips it), but in the non-`none` modes the API-token metadata (`jti`, `mask`) and CouchDB `_rev` are dropped too — `list_users`/`get_user` report only `hasApiToken: true`.
 
-The same mode applies to `get_service_env`, compose exports, nested services in `list_stacks`, and all services-using-resource tools. Requesting a variable by name does not bypass redaction. Compose sanitization parses YAML, including quoted/lowercase and aliased keys, flow syntax, multiline values, and anchors; comments are omitted from sanitized output. Environment blocks are identified by their service/template context, so labels named `environment` remain labels. Shared scalars used as both map values and `KEY=value` list entries retain the appropriate placeholder form at each use. Invalid or unsafe YAML is refused without returning source excerpts, including anchors whose redaction would also change a mapping key.
+The same mode applies to `get_service_env`, compose exports, nested services in `list_stacks`, and all services-using-resource tools. Requesting a variable by name does not bypass redaction. Compose sanitization parses YAML, including quoted/lowercase and aliased keys, flow syntax, multiline values, and anchors; comments are omitted from sanitized output. Environment blocks are identified by their service/template context, including nested and unused `x-` templates, so labels named `environment` remain labels. Shared scalars used as both map values and `KEY=value` list entries retain the appropriate placeholder form at each use. Explicit scalar tags are removed from placeholders so typed values can still round-trip. Invalid or unsafe YAML is refused without returning source excerpts, including anchors whose redaction would also change a mapping key.
 
 API errors report HTTP status and recognized field/type diagnostics, not rejected values, unknown predicates, or raw response bodies. This also protects secrets resolved through `$env`/`$file` when a write fails. Inspect server logs locally for additional diagnostics.
 
@@ -464,7 +464,7 @@ environment:
   NEW_SECRET: $env:MY_SECRET     # resolved locally
 ```
 
-References may be quoted and used in map or `KEY=$env:VAR_NAME` list form. Resolved values remain strings, including empty strings, numbers, comments, quotes, and newlines. Dollar signs in locally resolved values are escaped for Docker so they stay literal. Missing or partial references are refused; use `$$env:NAME` for an intentional literal `$env:NAME`.
+References may be quoted and used in map or `KEY=$env:VAR_NAME` list form. Resolved values remain strings, including empty strings, numbers, comments, quotes, and newlines. Dollar signs in locally resolved values are escaped for Docker so they stay literal. Missing or partial references are refused; use `$$env:NAME` for an intentional literal `$env:NAME`. References cannot define mapping keys, including through aliases. Environment-list references must include the variable name (`KEY=$env:VAR`), not define it with a bare `$env:VAR` entry.
 
 Preserved values are read from the **live service state**, not the stored stack file — the two diverge whenever a var is changed through `update_service_env` or the Swarmpit UI. If they disagree for a var being restored, `update_stack` says so in its result.
 
@@ -523,7 +523,7 @@ For stacks the diff is **semantic, not line-based** — the two composes are par
 
 Compared with a text diff this survives duplicate lines (`restart: always` in three services) and key reordering, and every change arrives attributed to its service. Ordered arrays such as `command`, `entrypoint`, `healthcheck.test`, and `env_file` are compared positionally. `$VAR` and `$$VAR` are different: Docker interpolates the former and treats the latter as a literal dollar sign. Previews retain that distinction and do not evaluate variables from the remote Docker environment.
 
-Env var **values only appear when the redaction mode would have shown them anyway**: never in `all`, only for non-sensitive names in `sensitive`, and freely in `none`. A changed value you can't see is still reported by name, both in `environment.changed` and in the document-wide `secretsChanged` list, so you always know *that* a secret moved without it being printed into the conversation.
+Env var **values only appear when the redaction mode would have shown them anyway**: never in `all`, only for non-sensitive names in `sensitive`, and freely in `none`. Values resolved from local `$env` references are also withheld in `all` and `sensitive`, including command, entrypoint, healthcheck, and alias uses outside environment blocks. A changed value you can't see is still reported by name, both in `environment.changed` and in the document-wide `secretsChanged` list, so you always know *that* a secret moved without it being printed into the conversation.
 
 ### Compose history
 

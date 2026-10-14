@@ -1,4 +1,4 @@
-import { isMap, isSeq, parseDocument, type Document } from "yaml";
+import { isAlias, isMap, isSeq, parseDocument, type Document } from "yaml";
 
 export function parseComposeDocument(yaml: string): Document {
   const doc = parseDocument(yaml, { merge: true, prettyErrors: false, logLevel: "silent" });
@@ -23,4 +23,23 @@ export function walkYaml(node: unknown, visit: (node: unknown, key: boolean) => 
   } else if (isSeq(node)) {
     for (const item of node.items) walkYaml(item, visit);
   }
+}
+
+export function mappingKeyTargets(doc: Document): Set<unknown> {
+  const targets = new Set<unknown>();
+  const mark = (node: unknown): void => {
+    const target = isAlias(node) ? node.resolve(doc) : node;
+    if (targets.has(target)) return;
+    targets.add(target);
+    if (isMap(target)) {
+      for (const pair of target.items) {
+        mark(pair.key);
+        mark(pair.value);
+      }
+    } else if (isSeq(target)) {
+      for (const item of target.items) mark(item);
+    }
+  };
+  walkYaml(doc.contents, (node, key) => { if (key) mark(node); });
+  return targets;
 }

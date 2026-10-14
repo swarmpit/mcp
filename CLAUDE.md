@@ -82,12 +82,12 @@ Three layers keep user secrets out of the conversation:
 
 1. **Response sanitization** (`sanitize.ts`)
    - `sanitizeService`: env var values replaced with `[REDACTED]`. `all` redacts all, `sensitive` matches name patterns (`pass`, `secret`, `token`, `key`, `auth`, `credential`, `private`, `dsn`, `connection.?string`) + user-provided `SWARMPIT_REDACT_PATTERNS`.
-   - `sanitizeComposeYaml`: parsed YAML-node redaction, including aliases, merges, flow collections, multiline scalars, and quoted/lowercase/aliased keys. Identify environment blocks through service/template context, never by an arbitrary label's name. Classify aliases before mutating their targets; keep map-value and `KEY=value` list placeholders distinct when they share an anchor. Refuse redaction that would also change a mapping key. Sanitized output omits comments; invalid YAML fails closed through `compose-yaml.ts`.
+   - `sanitizeComposeYaml`: parsed YAML-node redaction, including aliases, merges, flow collections, multiline scalars, and quoted/lowercase/aliased keys. Identify environment blocks through service/template context, including nested and unused `x-` templates, never by an arbitrary label's name. Classify aliases before mutating their targets; keep map-value and `KEY=value` list placeholders distinct when they share an anchor. Clear scalar tags/formats when masking typed values. Refuse redaction that would also change a mapping key, including aliases inside complex keys. Sanitized output omits comments; invalid YAML fails closed through `compose-yaml.ts`.
    - Secrets/configs `data` field zeroed unless mode is `none`.
 
 2. **`$env:` / `$file` references in tool inputs** (`helpers.ts::resolveEnvRef`, `resolveData`)
    - `update_service_env` accepts `{ $env: "MY_SECRET" }` per-var — resolved from `process.env` server-side.
-   - `create_stack` / `update_stack` / `create_stack_file` accept YAML with `$env:VAR_NAME` tokens (string or `{ $file: /path }`) — `resolveComposeEnvRefs` replaces scalar values, preserving strings and escaping dollars for Docker. Missing or partial references fail closed.
+   - `create_stack` / `update_stack` / `create_stack_file` accept YAML with `$env:VAR_NAME` tokens (string or `{ $file: /path }`) — `resolveComposeEnvRefs` replaces scalar values, preserving strings and escaping dollars for Docker. Missing/partial references and references used as mapping keys or environment-list names fail closed, including aliases. An optional per-call set collects resolved values and their Docker-escaped forms for preview redaction.
    - `create_secret` / `create_config` accept `{ $file: /path }` to read payload from disk (saves thousands of tokens on HTML pages, certs, large compose files).
 
 3. **`[REDACTED]` round-trip on writes** (`sanitize.ts::restoreRedactedValues`, `helpers.ts::restoreRedactedVariables`)
@@ -100,7 +100,7 @@ Three layers keep user secrets out of the conversation:
 
 4. **`dry_run` previews** (`helpers.ts::previewServiceChanges`, `compose-diff.ts::diffCompose`)
    - `update_service` / `update_stack` compute the full payload (restoration, `$env:`, null normalisation) and report the delta without writing.
-   - Services report var *names* by bucket (added/changed/removed). Stacks use the semantic diff, which emits an env value only when the redact mode would have shown it anyway (`none`, or `sensitive` + non-matching name) and otherwise emits the bare name. If you extend a preview, keep that property — it is the one place where a "safe" read-only operation could hand back everything redaction hid.
+   - Services report var *names* by bucket (added/changed/removed). Stacks use the semantic diff, which emits an env value only when the redact mode would have shown it anyway (`none`, or `sensitive` + non-matching name) and otherwise emits the bare name. Pass locally resolved `$env` values as `sensitiveValues` to `diffCompose`; these stay hidden outside environment blocks too, unless mode is `none`. Keep this provenance per call, never in global state or tool results. If you extend a preview, keep that property — it is the one place where a "safe" read-only operation could hand back everything redaction hid.
 
 ## Semantic compose diff
 
